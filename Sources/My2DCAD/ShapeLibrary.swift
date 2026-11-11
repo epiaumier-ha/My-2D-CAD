@@ -87,6 +87,11 @@ extension ShapeKind {
         // MARK: Formes de base
         case .rectangle, .text:
             out.fill = Path(r)
+        case .line:
+            line(&out.stroke, P(0, 1), P(1, 0))
+        case .curve:
+            out.stroke.move(to: P(0, 1))
+            out.stroke.addQuadCurve(to: P(1, 1), control: P(0.5, -1))
         case .ellipse:
             out.fill = Path(ellipseIn: r)
         case .diamond:

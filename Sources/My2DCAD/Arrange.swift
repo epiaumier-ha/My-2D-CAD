@@ -187,6 +187,12 @@ extension DocumentStore {
         let ids = selection
         perform { d in
             for i in d.shapes.indices where ids.contains(d.shapes[i].id) {
+                if d.shapes[i].kind.isPath {
+                    // Traits et courbes : la rotation est appliquée directement aux points.
+                    let pts = d.shapes[i].worldPoints.map { $0.rotated(by: a, around: pivot) }
+                    d.shapes[i].setWorldPoints(pts.map { CGPoint(x: roundCoordinate($0.x), y: roundCoordinate($0.y)) })
+                    continue
+                }
                 let c = d.shapes[i].center.rotated(by: a, around: pivot)
                 let size = d.shapes[i].rect.size
                 d.shapes[i].rect.origin = CGPoint(x: roundCoordinate(c.x - size.width / 2),

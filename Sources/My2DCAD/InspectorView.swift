@@ -16,7 +16,13 @@ struct InspectorView: View {
                     if let item = StencilCatalog.item(for: s.kind) {
                         LabeledContent("Type", value: item.name)
                     }
-                    if s.kind != .text && !s.kind.isLineArt {
+                    if s.kind.isPath {
+                        LabeledContent("Type", value: s.kind == .line ? "Trait" : "Courbe")
+                        ColorPicker("Couleur du trait", selection: Binding(
+                            get: { s.fill.color },
+                            set: { c in store.editSelectedShape(key: "fill") { $0.fill = RGBA(color: c) } }),
+                                    supportsOpacity: false)
+                    } else if s.kind != .text && !s.kind.isLineArt {
                         ColorPicker("Remplissage", selection: Binding(
                             get: { s.fill.color },
                             set: { c in store.editSelectedShape(key: "fill") { $0.fill = RGBA(color: c) } }),
@@ -26,6 +32,7 @@ struct InspectorView: View {
                 Section("Position et taille") {
                     field("X", value: s.rect.origin.x) { $0.rect.origin.x = $1 }
                     field("Y", value: s.rect.origin.y) { $0.rect.origin.y = $1 }
+                    if !s.kind.isPath {
                     field("Largeur", value: s.rect.width, minValue: 1) { $0.rect.size.width = $1 }
                     field("Hauteur", value: s.rect.height, minValue: 1) { $0.rect.size.height = $1 }
                     TextField("Rotation (°)", value: Binding<Double>(
@@ -35,6 +42,7 @@ struct InspectorView: View {
                             store.editSelectedShape(key: "rotation") { $0.rotation = normalizedAngle(v) }
                         }),
                               format: .number.precision(.fractionLength(0...1)))
+                    }
                 }
             } else if store.selection.isEmpty {
                 Section("Document") {

@@ -28,6 +28,8 @@ struct RGBA: Codable, Equatable {
 enum ShapeKind: String, Codable, CaseIterable {
     // Formes de base (aussi utilisées par l'organigramme : processus, connecteur, décision)
     case rectangle, ellipse, diamond, text
+    // Tracés libres : trait (2 points) et courbe de Bézier quadratique (début, contrôle, fin)
+    case line, curve
     // Organigramme
     case terminator, data, document, predefinedProcess, manualInput, preparation
     case database, offPageReference, delay, manualOperation
@@ -46,8 +48,10 @@ struct Shape: Identifiable, Codable, Equatable {
     var fill = RGBA.defaultFill
     /// Rotation en degrés (sens horaire à l'écran) autour du centre du rectangle.
     var rotation: Double = 0
+    /// Points d'un trait ou d'une courbe, relatifs à `rect.origin` (vide pour les autres formes).
+    var points: [CGPoint] = []
 
-    enum CodingKeys: String, CodingKey { case id, kind, rect, text, fill, rotation }
+    enum CodingKeys: String, CodingKey { case id, kind, rect, text, fill, rotation, points }
 }
 
 extension Shape {
@@ -60,6 +64,7 @@ extension Shape {
         text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
         fill = try c.decodeIfPresent(RGBA.self, forKey: .fill) ?? .defaultFill
         rotation = try c.decodeIfPresent(Double.self, forKey: .rotation) ?? 0
+        points = try c.decodeIfPresent([CGPoint].self, forKey: .points) ?? []
     }
 }
 

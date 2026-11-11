@@ -57,6 +57,14 @@ enum DiagramIO {
                 throw DiagramIOError.invalid("coordonnées hors limites")
             }
             guard r.size.width > 0, r.size.height > 0 else { throw DiagramIOError.invalid("taille de forme nulle") }
+            guard s.points.count <= 16, s.points.allSatisfy({
+                $0.x.isFinite && $0.y.isFinite && abs($0.x) <= maxCoordinate && abs($0.y) <= maxCoordinate
+            }) else { throw DiagramIOError.invalid("points invalides") }
+            if s.kind.isPath {
+                guard s.points.count == (s.kind == .line ? 2 : 3) else {
+                    throw DiagramIOError.invalid("nombre de points incorrect")
+                }
+            }
             guard s.rotation.isFinite, abs(s.rotation) <= 360 else { throw DiagramIOError.invalid("rotation invalide") }
             guard s.text.count <= maxTextLength else { throw DiagramIOError.invalid("texte trop long") }
             let c = [s.fill.r, s.fill.g, s.fill.b, s.fill.a]

@@ -212,7 +212,7 @@ final class StencilTests: XCTestCase {
             XCTAssertGreaterThan(item.size.height, 0)
         }
         // Tous les types sauf « texte » sont proposés dans une bibliothèque.
-        for kind in ShapeKind.allCases where kind != .text {
+        for kind in ShapeKind.allCases where kind != .text && !kind.isPath {
             XCTAssertNotNil(StencilCatalog.item(for: kind), "\(kind) absent des bibliothèques")
         }
     }
@@ -290,5 +290,78 @@ final class TextEditingTests: XCTestCase {
         store.startTextEditing(id)
         store.undo()
         XCTAssertNil(store.editingShapeID)
+    }
+}
+
+@MainActor
+final class PathTests: XCTestCase {
+    private func storeWithPath(_ kind: ShapeKind, _ a: CGPoint, _ b: CGPoint) -> (DocumentStore, UUID) {
+        let store = DocumentStore()
+        store.beginTransaction()
+        store.insertPath(kind: kind, from: a, to: b)
+        store.commitTransaction()
+        return (store, store.doc.shapes[0].id)
+    }
+
+    func testLineKeepsItsEndpoints() {
+        let (store, id) = storeWithPath(.line, CGPoint(x: 100, y: 50), CGPoint(x: 20, y: 90))
+        let s = store.doc.shape(id)!
+        XCTAssertEqual(s.worldPoints, [CGPoint(x: 100, y: 50), CGPoint(x: 20, y: 90)])
+        XCTAssertEqual(s.rect, CGRect(x: 20, y: 50, width: 80, height: 40))
+        store.undo()
+        XCTAssertTrue(store.doc.shapes.isEmpty)
+    }
+
+    func testHorizontalLineHasValidRect() throws {
+        let (store, _) = storeWithPath(.line, CGPoint(x: 0, y: 10), CGPoint(x: 100, y: 10))
+        XCTAssertGreaterThan(store.doc.shapes[0].rect.height, 0)
+        XCTAssertNoThrow(try DiagramIO.validate(store.doc))
+    }
+
+    func testHitTestOnLineAndCurve() {
+        let (store, id) = storeWithPath(.line, CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 100))
+        XCTAssertEqual(store.hitShape(at: CGPoint(x: 52, y: 50))?.id, id)
+        XCTAssertNil(store.hitShape(at: CGPoint(x: 80, y: 20)))
+        XCTAssertNil(store.hitShape(at: CGPoint(x: 52, y: 50), includePaths: false))
+
+        let (curveStore, curveID) = storeWithPath(.curve, CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0))
+        let mid = curveStore.doc.shape(curveID)!.pathMidpoint
+        XCTAssertEqual(curveStore.hitShape(at: mid)?.id, curveID)
+        XCTAssertNotEqual(mid.y, 0, "la courbe par défaut doit être bombée")
+    }
+
+    func testMovingAndRotatingKeepShape() {
+        let (store, id) = storeWithPath(.line, CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0))
+        store.selection = [id]
+        store.nudgeSelection(dx: 20, dy: 20)
+        XCTAssertEqual(store.doc.shape(id)!.worldPoints, [CGPoint(x: 20, y: 20), CGPoint(x: 120, y: 20)])
+        store.rotateSelection(by: 90)
+        let p = store.doc.shape(id)!.worldPoints
+        XCTAssertEqual(store.doc.shape(id)!.rotation, 0)
+        XCTAssertEqual(p[0].x, 70, accuracy: 1e-3)
+        XCTAssertEqual(p[0].y, -30, accuracy: 1e-3)
+        XCTAssertEqual(p[1].x, 70, accuracy: 1e-3)
+        XCTAssertEqual(p[1].y, 70, accuracy: 1e-3)
+    }
+
+    func testPathsSurviveSaveAndCopy() throws {
+        let (store, _) = storeWithPath(.curve, CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 40))
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("path-\(UUID().uuidString).cad2d")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try DiagramIO.save(store.doc, to: url)
+        XCTAssertEqual(try DiagramIO.load(from: url), store.doc)
+
+        store.selection = [store.doc.shapes[0].id]
+        XCTAssertTrue(store.insertFragment(store.makeFragment()!, offset: 20))
+        XCTAssertEqual(store.doc.shapes.count, 2)
+        XCTAssertEqual(store.doc.shapes[1].worldPoints[0], CGPoint(x: 20, y: 20))
+    }
+
+    func testValidationRejectsBadPoints() {
+        var s = Shape(kind: .line, rect: CGRect(x: 0, y: 0, width: 10, height: 10))
+        s.points = [CGPoint(x: 0, y: 0)]
+        XCTAssertThrowsError(try DiagramIO.validate(Diagram(shapes: [s])))
+        s.points = [CGPoint(x: 0, y: 0), CGPoint(x: CGFloat.nan, y: 0)]
+        XCTAssertThrowsError(try DiagramIO.validate(Diagram(shapes: [s])))
     }
 }

@@ -3,7 +3,7 @@ import AppKit
 import UniformTypeIdentifiers
 
 enum Tool: String, CaseIterable, Identifiable {
-    case select, pan, rectangle, ellipse, diamond, text, connector
+    case select, pan, rectangle, ellipse, diamond, text, line, curve, connector
 
     var id: String { rawValue }
 
@@ -15,6 +15,8 @@ enum Tool: String, CaseIterable, Identifiable {
         case .ellipse: return "Ellipse"
         case .diamond: return "Losange"
         case .text: return "Texte"
+        case .line: return "Trait"
+        case .curve: return "Courbe"
         case .connector: return "Connecteur"
         }
     }
@@ -27,6 +29,8 @@ enum Tool: String, CaseIterable, Identifiable {
         case .ellipse: return "circle"
         case .diamond: return "diamond"
         case .text: return "textformat"
+        case .line: return "line.diagonal"
+        case .curve: return "scribble"
         case .connector: return "arrow.up.right"
         }
     }
@@ -37,6 +41,8 @@ enum Tool: String, CaseIterable, Identifiable {
         case .ellipse: return .ellipse
         case .diamond: return .diamond
         case .text: return .text
+        case .line: return .line
+        case .curve: return .curve
         default: return nil
         }
     }
@@ -231,8 +237,14 @@ final class DocumentStore: ObservableObject {
 
     // MARK: Hit-testing
 
-    func hitShape(at world: CGPoint) -> Shape? {
-        doc.shapes.last { $0.contains(world) }
+    /// Forme sous le point. Les traits et courbes se saisissent à quelques pixels près ;
+    /// `includePaths: false` les ignore (ils n'ont pas de points de connexion).
+    func hitShape(at world: CGPoint, includePaths: Bool = true) -> Shape? {
+        let tolerance = 6 / zoom
+        return doc.shapes.last { s in
+            if s.kind.isPath { return includePaths && s.distanceToPath(world) <= tolerance }
+            return s.contains(world)
+        }
     }
 
     func hitConnector(at world: CGPoint) -> Connector? {
