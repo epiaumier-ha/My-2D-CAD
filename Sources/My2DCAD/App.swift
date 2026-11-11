@@ -18,15 +18,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct ContentView: View {
     @EnvironmentObject var store: DocumentStore
+    @State private var showStencils = true
 
     var body: some View {
         HStack(spacing: 0) {
+            if showStencils {
+                StencilPanel().frame(width: 210)
+                Divider()
+            }
             CanvasView()
             Divider()
             InspectorView().frame(width: 250)
         }
         .navigationTitle(store.title)
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button { showStencils.toggle() } label: { Image(systemName: "sidebar.left") }
+                    .help("Afficher ou masquer les bibliothèques de formes")
+            }
             ToolbarItem(placement: .principal) {
                 Picker("Outil", selection: $store.tool) {
                     ForEach(Tool.allCases) { t in

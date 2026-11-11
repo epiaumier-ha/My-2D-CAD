@@ -98,8 +98,6 @@ extension Shape {
     func contains(_ point: CGPoint) -> Bool {
         let p = toLocal(point)
         switch kind {
-        case .rectangle, .text:
-            return rect.contains(p)
         case .ellipse:
             let rx = rect.width / 2, ry = rect.height / 2
             guard rx > 0, ry > 0 else { return false }
@@ -109,6 +107,9 @@ extension Shape {
             let rx = rect.width / 2, ry = rect.height / 2
             guard rx > 0, ry > 0 else { return false }
             return abs(p.x - rect.midX) / rx + abs(p.y - rect.midY) / ry <= 1
+        default:
+            // Autres formes et symboles : rectangle englobant (plus facile à saisir).
+            return rect.contains(p)
         }
     }
 }

@@ -55,6 +55,12 @@ struct CanvasView: View {
                 render(&ctx, size: size)
             }
             .gesture(dragGesture)
+            .dropDestination(for: String.self) { items, location in
+                guard let payload = items.first,
+                      let item = StencilCatalog.item(fromDragPayload: payload) else { return false }
+                store.insertStencil(item, centeredAt: store.toWorld(location))
+                return true
+            }
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let p):
@@ -319,20 +325,7 @@ struct CanvasView: View {
     }
 
     private func shapePath(_ kind: ShapeKind, _ r: CGRect) -> Path {
-        switch kind {
-        case .rectangle, .text:
-            return Path(r)
-        case .ellipse:
-            return Path(ellipseIn: r)
-        case .diamond:
-            var p = Path()
-            p.move(to: CGPoint(x: r.midX, y: r.minY))
-            p.addLine(to: CGPoint(x: r.maxX, y: r.midY))
-            p.addLine(to: CGPoint(x: r.midX, y: r.maxY))
-            p.addLine(to: CGPoint(x: r.minX, y: r.midY))
-            p.closeSubpath()
-            return p
-        }
+        kind.paths(in: r).outline
     }
 
     /// Rotation autour du centre du rectangle écran (le zoom est uniforme, l'angle est conservé).
@@ -346,9 +339,18 @@ struct CanvasView: View {
     private func drawShape(_ s: Shape, in ctx: inout GraphicsContext) {
         let r = store.toScreen(s.rect)
         if s.kind != .text {
-            let p = shapePath(s.kind, r).applying(rotationTransform(s, screenRect: r))
-            ctx.fill(p, with: .color(s.fill.color))
-            ctx.stroke(p, with: .color(Color(white: 0.25)), lineWidth: 1.5)
+            let t = rotationTransform(s, screenRect: r)
+            let parts = s.kind.paths(in: r)
+            let lineColor = Color(white: 0.25)
+            if !parts.fill.isEmpty {
+                let body = parts.fill.applying(t)
+                ctx.fill(body, with: .color(s.fill.color))
+                ctx.stroke(body, with: .color(lineColor), lineWidth: 1.5)
+            }
+            if !parts.stroke.isEmpty {
+                ctx.stroke(parts.stroke.applying(t), with: .color(lineColor),
+                           style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            }
         }
         let placeholder = s.text.isEmpty && s.kind == .text
         let label = placeholder ? "Texte" : s.text
@@ -359,7 +361,11 @@ struct CanvasView: View {
             var textContext = ctx
             textContext.translateBy(x: r.midX, y: r.midY)
             if s.rotation != 0 { textContext.rotate(by: .radians(Double(s.angle))) }
-            textContext.draw(t, at: .zero, anchor: .center)
+            if s.kind.labelPlacement == .below {
+                textContext.draw(t, at: CGPoint(x: 0, y: r.height / 2 + 4), anchor: .top)
+            } else {
+                textContext.draw(t, at: .zero, anchor: .center)
+            }
         }
     }
 

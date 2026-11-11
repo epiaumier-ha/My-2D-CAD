@@ -26,7 +26,15 @@ struct RGBA: Codable, Equatable {
 }
 
 enum ShapeKind: String, Codable, CaseIterable {
+    // Formes de base (aussi utilisées par l'organigramme : processus, connecteur, décision)
     case rectangle, ellipse, diamond, text
+    // Organigramme
+    case terminator, data, document, predefinedProcess, manualInput, preparation
+    case database, offPageReference, delay, manualOperation
+    // Réseau
+    case server, workstation, laptop, router, networkSwitch, firewall, cloud, printer, accessPoint
+    // Électricité (symboles IEC, bornes à gauche et à droite)
+    case resistor, capacitor, inductor, diode, battery, electricSwitch, ground, lamp, acSource, motor, fuse
 }
 
 struct Shape: Identifiable, Codable, Equatable {

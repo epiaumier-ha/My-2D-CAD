@@ -13,7 +13,10 @@ struct InspectorView: View {
                             let limited = String(v.prefix(DiagramIO.maxTextLength))
                             store.editSelectedShape(key: "text") { $0.text = limited }
                         }))
-                    if s.kind != .text {
+                    if let item = StencilCatalog.item(for: s.kind) {
+                        LabeledContent("Type", value: item.name)
+                    }
+                    if s.kind != .text && !s.kind.isLineArt {
                         ColorPicker("Remplissage", selection: Binding(
                             get: { s.fill.color },
                             set: { c in store.editSelectedShape(key: "fill") { $0.fill = RGBA(color: c) } }),

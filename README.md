@@ -7,6 +7,8 @@ Application de dessin 2D inspirée de Microsoft Visio (macOS 14+, Swift 5.9, Swi
 - Tests : ⌘U dans Xcode, ou `swift test`.
 
 ## Fonctions
+- **Bibliothèques de formes** (panneau de gauche, recherche, glisser-déposer ou clic) :
+  organigramme (13 formes), réseau (9 icônes), électricité (11 symboles IEC).
 - Formes : rectangle, ellipse, losange, texte (clic = taille par défaut, glisser = taille libre).
 - Sélection (clic, Maj+clic, rectangle de sélection), déplacement, redimensionnement par les coins.
 - Connecteurs orthogonaux collés aux points de connexion (haut/droite/bas/gauche) : ils suivent les formes.
@@ -20,6 +22,8 @@ Application de dessin 2D inspirée de Microsoft Visio (macOS 14+, Swift 5.9, Swi
 ## Architecture
 - `Model.swift` : données (Shape, Connector, Diagram), indépendantes du rendu.
 - `Geometry.swift` : rotation, hit-test, points de connexion, routage.
+- `ShapeLibrary.swift` : tracés vectoriels de chaque type de forme.
+- `Stencils.swift` : catalogue des bibliothèques et panneau latéral.
 - `Arrange.swift` : presse-papiers, alignement, répartition, rotation de la sélection.
 - `Persistence.swift` : E/S JSON + validation (limites de taille, valeurs finies, références).
 - `DocumentStore.swift` : état, historique, vue, fichiers, clavier/molette.

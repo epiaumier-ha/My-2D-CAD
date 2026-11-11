@@ -191,3 +191,57 @@ final class ArrangeTests: XCTestCase {
         XCTAssertTrue(store.doc.shapes.isEmpty)
     }
 }
+
+final class StencilTests: XCTestCase {
+    func testEveryKindDrawsInsideItsRect() {
+        let r = CGRect(x: 10, y: 20, width: 100, height: 60)
+        for kind in ShapeKind.allCases {
+            let parts = kind.paths(in: r)
+            XCTAssertFalse(parts.outline.isEmpty, "\(kind) n'a pas de tracé")
+            let b = parts.fill.boundingRect.union(parts.stroke.boundingRect)
+            XCTAssertTrue(r.insetBy(dx: -1, dy: -1).contains(b), "\(kind) déborde de son cadre : \(b)")
+        }
+    }
+
+    func testCatalogIsConsistent() {
+        let items = StencilCatalog.libraries.flatMap(\.items)
+        XCTAssertEqual(Set(items.map(\.kind)).count, items.count, "type présent dans deux bibliothèques")
+        for item in items {
+            XCTAssertGreaterThan(item.size.width, 0)
+            XCTAssertGreaterThan(item.size.height, 0)
+        }
+        // Tous les types sauf « texte » sont proposés dans une bibliothèque.
+        for kind in ShapeKind.allCases where kind != .text {
+            XCTAssertNotNil(StencilCatalog.item(for: kind), "\(kind) absent des bibliothèques")
+        }
+    }
+
+    func testDragPayloadValidation() {
+        let item = StencilCatalog.item(for: .server)!
+        XCTAssertEqual(StencilCatalog.item(fromDragPayload: StencilCatalog.dragPayload(item))?.kind, .server)
+        XCTAssertNil(StencilCatalog.item(fromDragPayload: "server"))
+        XCTAssertNil(StencilCatalog.item(fromDragPayload: StencilCatalog.dragPrefix + "inconnu"))
+        XCTAssertNil(StencilCatalog.item(fromDragPayload: "Un texte glissé depuis une autre application"))
+    }
+
+    @MainActor
+    func testInsertStencilIsUndoable() {
+        let store = DocumentStore()
+        store.insertStencil(StencilCatalog.item(for: .resistor)!, centeredAt: CGPoint(x: 100, y: 100))
+        XCTAssertEqual(store.doc.shapes.first?.kind, .resistor)
+        XCTAssertEqual(store.selection, [store.doc.shapes[0].id])
+        store.undo()
+        XCTAssertTrue(store.doc.shapes.isEmpty)
+    }
+
+    func testStencilShapesSurviveSaveAndLoad() throws {
+        let shapes = StencilCatalog.libraries.flatMap(\.items).map {
+            Shape(kind: $0.kind, rect: CGRect(origin: .zero, size: $0.size), text: $0.defaultText)
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("stencils-\(UUID().uuidString).cad2d")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let d = Diagram(shapes: shapes)
+        try DiagramIO.save(d, to: url)
+        XCTAssertEqual(try DiagramIO.load(from: url), d)
+    }
+}
