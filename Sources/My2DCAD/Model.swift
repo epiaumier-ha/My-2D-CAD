@@ -36,6 +36,23 @@ struct Shape: Identifiable, Codable, Equatable {
     var rect: CGRect
     var text = ""
     var fill = RGBA.defaultFill
+    /// Rotation en degrés (sens horaire à l'écran) autour du centre du rectangle.
+    var rotation: Double = 0
+
+    enum CodingKeys: String, CodingKey { case id, kind, rect, text, fill, rotation }
+}
+
+extension Shape {
+    /// Décodage tolérant : les fichiers créés avant la rotation restent lisibles.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        kind = try c.decode(ShapeKind.self, forKey: .kind)
+        rect = try c.decode(CGRect.self, forKey: .rect)
+        text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+        fill = try c.decodeIfPresent(RGBA.self, forKey: .fill) ?? .defaultFill
+        rotation = try c.decodeIfPresent(Double.self, forKey: .rotation) ?? 0
+    }
 }
 
 /// Connecteur collé : il référence des points de connexion (0 haut, 1 droite, 2 bas, 3 gauche)
@@ -66,7 +83,7 @@ struct Diagram: Codable, Equatable {
 
     func connectorPoints(_ c: Connector) -> [CGPoint]? {
         guard let a = shape(c.fromShape), let b = shape(c.toShape) else { return nil }
-        return routeConnector(from: a.portPoint(c.fromPort), portA: c.fromPort,
-                              to: b.portPoint(c.toPort), portB: c.toPort)
+        return routeConnector(from: a.portPoint(c.fromPort), dirA: a.portDirection(c.fromPort),
+                              to: b.portPoint(c.toPort), dirB: b.portDirection(c.toPort))
     }
 }

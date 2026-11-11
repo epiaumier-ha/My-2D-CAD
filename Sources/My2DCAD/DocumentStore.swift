@@ -76,6 +76,8 @@ final class DocumentStore: ObservableObject {
     var canvasSize = CGSize(width: 800, height: 600)
     var hover: CGPoint?
     var mouseInCanvas = false
+    /// Nombre de collages successifs depuis la dernière copie (décalage en escalier).
+    var pasteCount = 0
     private var monitor: Any?
 
     static let fileType = UTType(filenameExtension: "cad2d", conformingTo: .json) ?? .json
@@ -178,21 +180,10 @@ final class DocumentStore: ObservableObject {
         selection = []
     }
 
+    /// Duplique les formes sélectionnées et les connecteurs qui les relient.
     func duplicateSelection() {
-        let originals = doc.shapes.filter { selection.contains($0.id) }
-        guard !originals.isEmpty, doc.shapes.count + originals.count <= DiagramIO.maxShapes else { return }
-        var newIDs = Set<UUID>()
-        let step = gridSize
-        perform { d in
-            for var s in originals {
-                s.id = UUID()
-                s.rect.origin.x += step
-                s.rect.origin.y += step
-                newIDs.insert(s.id)
-                d.shapes.append(s)
-            }
-        }
-        selection = newIDs
+        guard let fragment = makeFragment() else { return }
+        insertFragment(fragment, offset: gridSize)
     }
 
     func selectAll() {
@@ -262,7 +253,7 @@ final class DocumentStore: ObservableObject {
 
     func fitToContent() {
         guard let first = doc.shapes.first else { resetView(); return }
-        let bounds = doc.shapes.dropFirst().reduce(first.rect) { $0.union($1.rect) }
+        let bounds = doc.shapes.dropFirst().reduce(first.bounds) { $0.union($1.bounds) }
         let pad: CGFloat = 40
         let availW = max(canvasSize.width - 2 * pad, 50)
         let availH = max(canvasSize.height - 2 * pad, 50)

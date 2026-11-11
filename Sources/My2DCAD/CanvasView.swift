@@ -4,6 +4,7 @@ import AppKit
 private enum Handle: CaseIterable {
     case topLeft, topRight, bottomLeft, bottomRight
 
+    /// Position dans le repère local (forme non pivotée).
     func point(in r: CGRect) -> CGPoint {
         switch self {
         case .topLeft: return CGPoint(x: r.minX, y: r.minY)
@@ -26,7 +27,8 @@ private enum Handle: CaseIterable {
 
 private enum Interaction {
     case moving(origins: [UUID: CGPoint], start: CGPoint, primary: UUID)
-    case resizing(id: UUID, handle: Handle, original: CGRect)
+    case resizing(original: Shape, handle: Handle)
+    case rotating(original: Shape, startAngle: CGFloat)
     case drawing(kind: ShapeKind, start: CGPoint, current: CGPoint)
     case connecting(from: UUID, port: Int, current: CGPoint)
     case marquee(start: CGPoint, current: CGPoint, additive: Bool)
@@ -36,6 +38,10 @@ private enum Interaction {
 private func rectBetween(_ a: CGPoint, _ b: CGPoint) -> CGRect {
     CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
 }
+
+/// Distance (en pixels écran) entre le haut de la forme et la poignée de rotation.
+private let rotationHandleDistance: CGFloat = 28
+private let minimumShapeSize: CGFloat = 10
 
 struct CanvasView: View {
     @EnvironmentObject var store: DocumentStore
@@ -64,6 +70,29 @@ struct CanvasView: View {
         .clipped()
     }
 
+    // MARK: - Poignées
+
+    private func handleScreenPoint(_ s: Shape, _ h: Handle) -> CGPoint {
+        store.toScreen(s.toWorld(h.point(in: s.rect)))
+    }
+
+    private func topCenterScreenPoint(_ s: Shape) -> CGPoint {
+        store.toScreen(s.toWorld(CGPoint(x: s.rect.midX, y: s.rect.minY)))
+    }
+
+    private func rotationHandleScreenPoint(_ s: Shape) -> CGPoint {
+        let local = CGPoint(x: s.rect.midX, y: s.rect.minY - rotationHandleDistance / store.zoom)
+        return store.toScreen(s.toWorld(local))
+    }
+
+    private func handleHit(_ s: Shape, at screen: CGPoint) -> Handle? {
+        Handle.allCases.first { handleScreenPoint(s, $0).distance(to: screen) <= 8 }
+    }
+
+    private func shapeIndex(_ id: UUID) -> Int? {
+        store.doc.shapes.firstIndex { $0.id == id }
+    }
+
     // MARK: - Gestes
 
     private var dragGesture: some Gesture {
@@ -75,11 +104,6 @@ struct CanvasView: View {
             .onEnded { v in
                 finish(v)
             }
-    }
-
-    private func handleHit(_ shape: Shape, at screen: CGPoint) -> Handle? {
-        let r = store.toScreen(shape.rect)
-        return Handle.allCases.first { $0.point(in: r).distance(to: screen) <= 8 }
     }
 
     private func begin(at screen: CGPoint) {
@@ -103,9 +127,16 @@ struct CanvasView: View {
 
         case .select:
             let additive = NSEvent.modifierFlags.contains(.shift)
-            if let s = store.singleSelectedShape, let h = handleHit(s, at: screen) {
-                interaction = .resizing(id: s.id, handle: h, original: s.rect)
-                return
+            if let s = store.singleSelectedShape {
+                if rotationHandleScreenPoint(s).distance(to: screen) <= 9 {
+                    let c = s.center
+                    interaction = .rotating(original: s, startAngle: atan2(w.y - c.y, w.x - c.x))
+                    return
+                }
+                if let h = handleHit(s, at: screen) {
+                    interaction = .resizing(original: s, handle: h)
+                    return
+                }
             }
             if let s = store.hitShape(at: w) {
                 if additive {
@@ -146,13 +177,32 @@ struct CanvasView: View {
                 }
             }
 
-        case .resizing(let id, let handle, let original):
-            let a = handle.anchor(in: original)
-            let p = store.snap(w)
-            let r = CGRect(x: min(a.x, p.x), y: min(a.y, p.y),
-                           width: max(abs(p.x - a.x), 10), height: max(abs(p.y - a.y), 10))
-            if let i = store.doc.shapes.firstIndex(where: { $0.id == id }) {
-                store.doc.shapes[i].rect = r
+        case .resizing(let original, let handle):
+            // Calcul dans le repère local de la forme, le coin opposé restant fixe.
+            let pointer = original.rotation == 0 ? store.snap(w) : w
+            let a = handle.anchor(in: original.rect)
+            let q = original.toLocal(pointer)
+            let width = max(abs(q.x - a.x), minimumShapeSize)
+            let height = max(abs(q.y - a.y), minimumShapeSize)
+            let localRect = CGRect(x: q.x >= a.x ? a.x : a.x - width,
+                                   y: q.y >= a.y ? a.y : a.y - height,
+                                   width: width, height: height)
+            let newCenter = original.toWorld(CGPoint(x: localRect.midX, y: localRect.midY))
+            if let i = shapeIndex(original.id) {
+                store.doc.shapes[i].rect = CGRect(x: newCenter.x - width / 2, y: newCenter.y - height / 2,
+                                                  width: width, height: height)
+            }
+
+        case .rotating(let original, let startAngle):
+            let c = original.center
+            let currentAngle = atan2(w.y - c.y, w.x - c.x)
+            var degrees = original.rotation + Double(currentAngle - startAngle) * 180 / .pi
+            // Maj : pas de 15°, sinon précision au dixième de degré.
+            degrees = NSEvent.modifierFlags.contains(.shift)
+                ? (degrees / 15).rounded() * 15
+                : (degrees * 10).rounded() / 10
+            if let i = shapeIndex(original.id) {
+                store.doc.shapes[i].rotation = normalizedAngle(degrees)
             }
 
         case .drawing(let kind, let start, _):
@@ -206,7 +256,7 @@ struct CanvasView: View {
 
         case .marquee(let start, let end, let additive):
             let rect = rectBetween(start, end)
-            let hit = Set(store.doc.shapes.filter { $0.rect.intersects(rect) }.map(\.id))
+            let hit = Set(store.doc.shapes.filter { $0.bounds.intersects(rect) }.map(\.id))
             store.selection = additive ? store.selection.union(hit) : hit
 
         default:
@@ -285,10 +335,18 @@ struct CanvasView: View {
         }
     }
 
+    /// Rotation autour du centre du rectangle écran (le zoom est uniforme, l'angle est conservé).
+    private func rotationTransform(_ s: Shape, screenRect r: CGRect) -> CGAffineTransform {
+        guard s.rotation != 0 else { return .identity }
+        return CGAffineTransform(translationX: r.midX, y: r.midY)
+            .rotated(by: s.angle)
+            .translatedBy(x: -r.midX, y: -r.midY)
+    }
+
     private func drawShape(_ s: Shape, in ctx: inout GraphicsContext) {
         let r = store.toScreen(s.rect)
         if s.kind != .text {
-            let p = shapePath(s.kind, r)
+            let p = shapePath(s.kind, r).applying(rotationTransform(s, screenRect: r))
             ctx.fill(p, with: .color(s.fill.color))
             ctx.stroke(p, with: .color(Color(white: 0.25)), lineWidth: 1.5)
         }
@@ -298,7 +356,10 @@ struct CanvasView: View {
             let t = Text(label)
                 .font(.system(size: 14 * store.zoom))
                 .foregroundColor(placeholder ? .gray : .black)
-            ctx.draw(t, at: CGPoint(x: r.midX, y: r.midY), anchor: .center)
+            var textContext = ctx
+            textContext.translateBy(x: r.midX, y: r.midY)
+            if s.rotation != 0 { textContext.rotate(by: .radians(Double(s.angle))) }
+            textContext.draw(t, at: .zero, anchor: .center)
         }
     }
 
@@ -327,19 +388,35 @@ struct CanvasView: View {
     }
 
     private func drawSelection(_ ctx: inout GraphicsContext) {
-        let selectedShapes = store.doc.shapes.filter { store.selection.contains($0.id) }
-        for s in selectedShapes {
-            let r = store.toScreen(s.rect).insetBy(dx: -3, dy: -3)
-            ctx.stroke(Path(r), with: .color(accent), lineWidth: 1.5)
-        }
-        if let s = store.singleSelectedShape {
+        for s in store.selectedShapes {
             let r = store.toScreen(s.rect)
-            for h in Handle.allCases {
-                let p = h.point(in: r)
-                let box = CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)
-                ctx.fill(Path(box), with: .color(.white))
-                ctx.stroke(Path(box), with: .color(accent), lineWidth: 1.5)
-            }
+            let outline = Path(r.insetBy(dx: -3, dy: -3)).applying(rotationTransform(s, screenRect: r))
+            ctx.stroke(outline, with: .color(accent), lineWidth: 1.5)
+        }
+        guard let s = store.singleSelectedShape else { return }
+
+        // Poignée de rotation, reliée au milieu du bord supérieur.
+        let top = topCenterScreenPoint(s)
+        let knob = rotationHandleScreenPoint(s)
+        var stem = Path()
+        stem.move(to: top)
+        stem.addLine(to: knob)
+        ctx.stroke(stem, with: .color(accent), lineWidth: 1)
+        let knobRect = CGRect(x: knob.x - 5, y: knob.y - 5, width: 10, height: 10)
+        ctx.fill(Path(ellipseIn: knobRect), with: .color(.white))
+        ctx.stroke(Path(ellipseIn: knobRect), with: .color(accent), lineWidth: 1.5)
+
+        // Poignées de redimensionnement.
+        for h in Handle.allCases {
+            let p = handleScreenPoint(s, h)
+            let box = CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)
+            ctx.fill(Path(box), with: .color(.white))
+            ctx.stroke(Path(box), with: .color(accent), lineWidth: 1.5)
+        }
+
+        if case .rotating = interaction {
+            let label = Text("\(s.rotation, specifier: "%.1f")°").font(.system(size: 11)).foregroundColor(accent)
+            ctx.draw(label, at: CGPoint(x: knob.x + 14, y: knob.y), anchor: .leading)
         }
     }
 
@@ -358,8 +435,9 @@ struct CanvasView: View {
             p.addLine(to: store.toScreen(end))
             ctx.stroke(p, with: .color(accent), style: dashed)
             if let target = store.hitShape(at: end), target.id != from {
-                let r = store.toScreen(target.rect).insetBy(dx: -3, dy: -3)
-                ctx.stroke(Path(r), with: .color(.green), lineWidth: 2)
+                let r = store.toScreen(target.rect)
+                let outline = Path(r.insetBy(dx: -3, dy: -3)).applying(rotationTransform(target, screenRect: r))
+                ctx.stroke(outline, with: .color(.green), lineWidth: 2)
             }
 
         case .marquee(let start, let end, _):

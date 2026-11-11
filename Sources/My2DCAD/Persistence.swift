@@ -57,6 +57,7 @@ enum DiagramIO {
                 throw DiagramIOError.invalid("coordonnées hors limites")
             }
             guard r.size.width > 0, r.size.height > 0 else { throw DiagramIOError.invalid("taille de forme nulle") }
+            guard s.rotation.isFinite, abs(s.rotation) <= 360 else { throw DiagramIOError.invalid("rotation invalide") }
             guard s.text.count <= maxTextLength else { throw DiagramIOError.invalid("texte trop long") }
             let c = [s.fill.r, s.fill.g, s.fill.b, s.fill.a]
             guard c.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }) else {

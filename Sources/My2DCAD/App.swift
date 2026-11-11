@@ -50,6 +50,14 @@ struct ContentView: View {
     }
 }
 
+/// Si un champ de texte est en cours d'édition, la commande lui est transmise
+/// (copier-coller de texte dans l'inspecteur) ; sinon elle s'applique au dessin.
+@MainActor
+private func forwardToTextEditor(_ action: Selector) -> Bool {
+    guard let editor = NSApp.keyWindow?.firstResponder as? NSText else { return false }
+    return NSApp.sendAction(action, to: editor, from: nil)
+}
+
 @main
 struct My2DCADApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -74,13 +82,43 @@ struct My2DCADApp: App {
                 Button("Rétablir") { store.redo() }
                     .keyboardShortcut("z", modifiers: [.command, .shift]).disabled(!store.canRedo)
             }
-            CommandGroup(after: .pasteboard) {
+            CommandGroup(replacing: .pasteboard) {
+                Button("Couper") {
+                    if !forwardToTextEditor(#selector(NSText.cut(_:))) { store.cutSelection() }
+                }.keyboardShortcut("x")
+                Button("Copier") {
+                    if !forwardToTextEditor(#selector(NSText.copy(_:))) { store.copySelection() }
+                }.keyboardShortcut("c")
+                Button("Coller") {
+                    if !forwardToTextEditor(#selector(NSText.paste(_:))) { store.paste() }
+                }.keyboardShortcut("v")
                 Divider()
                 Button("Dupliquer") { store.duplicateSelection() }.keyboardShortcut("d")
-                Button("Tout sélectionner (dessin)") { store.selectAll() }
-                    .keyboardShortcut("a", modifiers: [.command, .option])
+                Button("Tout sélectionner") {
+                    if !forwardToTextEditor(#selector(NSText.selectAll(_:))) { store.selectAll() }
+                }.keyboardShortcut("a")
                 Button("Supprimer la sélection") { store.deleteSelection() }
                     .keyboardShortcut(.delete, modifiers: .command)
+            }
+            CommandMenu("Disposition") {
+                Menu("Aligner") {
+                    ForEach(ShapeAlignment.allCases, id: \.self) { a in
+                        Button(a.label) { store.align(a) }
+                    }
+                }
+                .disabled(store.selectedShapes.count < 2)
+                Menu("Répartir") {
+                    Button("Horizontalement") { store.distribute(.horizontal) }
+                    Button("Verticalement") { store.distribute(.vertical) }
+                }
+                .disabled(store.selectedShapes.count < 3)
+                Divider()
+                Button("Faire pivoter à droite (90°)") { store.rotateSelection(by: 90) }
+                    .keyboardShortcut("r", modifiers: .control)
+                    .disabled(store.selectedShapes.isEmpty)
+                Button("Faire pivoter à gauche (90°)") { store.rotateSelection(by: -90) }
+                    .keyboardShortcut("l", modifiers: .control)
+                    .disabled(store.selectedShapes.isEmpty)
             }
             CommandMenu("Outils") {
                 ForEach(Array(Tool.allCases.enumerated()), id: \.element) { index, tool in

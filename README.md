@@ -12,11 +12,15 @@ Application de dessin 2D inspirée de Microsoft Visio (macOS 14+, Swift 5.9, Swi
 - Connecteurs orthogonaux collés aux points de connexion (haut/droite/bas/gauche) : ils suivent les formes.
 - Grille avec magnétisme, zoom (pincement, ⌘/⌥ + molette, menu Affichage), déplacement de la vue (défilement ou outil Main).
 - Inspecteur : texte, couleur, position et taille. Dupliquer (⌘D), supprimer (⌫), flèches pour décaler (⌥ = 1 unité).
+- Copier (⌘C), couper (⌘X), coller (⌘V, décalage en escalier) : les connecteurs entre formes copiées suivent.
+- Rotation : poignée ronde au-dessus de la forme (Maj = pas de 15°), champ « Rotation » de l'inspecteur, ⌃R / ⌃L pour ±90°.
+- Menu **Disposition** et inspecteur : aligner (gauche, centre, droite, haut, milieu, bas) et répartir horizontalement/verticalement.
 - Annuler/rétablir (100 niveaux), enregistrement/ouverture JSON (.cad2d) avec validation stricte du fichier.
 
 ## Architecture
 - `Model.swift` : données (Shape, Connector, Diagram), indépendantes du rendu.
-- `Geometry.swift` : hit-test, points de connexion, routage.
+- `Geometry.swift` : rotation, hit-test, points de connexion, routage.
+- `Arrange.swift` : presse-papiers, alignement, répartition, rotation de la sélection.
 - `Persistence.swift` : E/S JSON + validation (limites de taille, valeurs finies, références).
 - `DocumentStore.swift` : état, historique, vue, fichiers, clavier/molette.
 - `CanvasView.swift` / `InspectorView.swift` / `App.swift` : interface.

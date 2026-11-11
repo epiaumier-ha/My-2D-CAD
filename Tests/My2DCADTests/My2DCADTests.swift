@@ -90,3 +90,104 @@ final class StoreTests: XCTestCase {
         XCTAssertTrue(store.doc.connectors.isEmpty)
     }
 }
+
+final class RotationTests: XCTestCase {
+    /// Rectangle 100×20 pivoté de 90° autour de son centre (50, 10).
+    private let rotated = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 100, height: 20), rotation: 90)
+
+    func testHitTestFollowsRotation() {
+        XCTAssertTrue(rotated.contains(CGPoint(x: 50, y: 50)))
+        XCTAssertFalse(rotated.contains(CGPoint(x: 90, y: 10)))   // dans le rectangle non pivoté seulement
+    }
+
+    func testBoundsAndPortsFollowRotation() {
+        XCTAssertEqual(rotated.bounds.width, 20, accuracy: 1e-9)
+        XCTAssertEqual(rotated.bounds.height, 100, accuracy: 1e-9)
+        let right = rotated.portPoint(1)          // le point « droite » passe en bas
+        XCTAssertEqual(right.x, 50, accuracy: 1e-9)
+        XCTAssertEqual(right.y, 60, accuracy: 1e-9)
+        let dir = rotated.portDirection(1)
+        XCTAssertEqual(dir.dx, 0, accuracy: 1e-9)
+        XCTAssertEqual(dir.dy, 1, accuracy: 1e-9)
+    }
+
+    func testNormalizedAngle() {
+        XCTAssertEqual(normalizedAngle(-90), 270)
+        XCTAssertEqual(normalizedAngle(360), 0)
+        XCTAssertEqual(normalizedAngle(725), 5)
+    }
+
+    func testDecodesFileWithoutRotation() throws {
+        let json = """
+        {"id":"\(UUID().uuidString)","kind":"rectangle","rect":[[0,0],[10,10]],"text":"","fill":{"r":1,"g":1,"b":1,"a":1}}
+        """
+        let s = try JSONDecoder().decode(Shape.self, from: Data(json.utf8))
+        XCTAssertEqual(s.rotation, 0)
+    }
+}
+
+@MainActor
+final class ArrangeTests: XCTestCase {
+    private func storeWith(_ rects: [CGRect]) -> DocumentStore {
+        let store = DocumentStore()
+        let shapes = rects.map { Shape(kind: .rectangle, rect: $0) }
+        store.perform { $0.shapes = shapes }
+        store.selection = Set(shapes.map(\.id))
+        return store
+    }
+
+    func testAlignLeft() {
+        let store = storeWith([CGRect(x: 10, y: 0, width: 50, height: 20),
+                               CGRect(x: 80, y: 40, width: 30, height: 20)])
+        store.align(.left)
+        XCTAssertTrue(store.doc.shapes.allSatisfy { $0.rect.minX == 10 })
+        store.undo()
+        XCTAssertEqual(store.doc.shapes[1].rect.minX, 80)
+    }
+
+    func testDistributeHorizontally() {
+        let store = storeWith([CGRect(x: 0, y: 0, width: 20, height: 20),
+                               CGRect(x: 30, y: 0, width: 20, height: 20),
+                               CGRect(x: 180, y: 0, width: 20, height: 20)])
+        store.distribute(.horizontal)
+        // Espace total 200, formes 60 → deux écarts de 70 : la forme du milieu va en x = 90.
+        XCTAssertEqual(store.doc.shapes[1].rect.minX, 90, accuracy: 1e-9)
+        XCTAssertEqual(store.doc.shapes[0].rect.minX, 0)
+        XCTAssertEqual(store.doc.shapes[2].rect.minX, 180)
+    }
+
+    func testRotateSelectionKeepsSizeAndPivot() {
+        let store = storeWith([CGRect(x: 0, y: 0, width: 100, height: 20)])
+        store.rotateSelection(by: 90)
+        let s = store.doc.shapes[0]
+        XCTAssertEqual(s.rotation, 90)
+        XCTAssertEqual(s.rect.size, CGSize(width: 100, height: 20))
+        XCTAssertEqual(s.center.x, 50, accuracy: 1e-6)
+        XCTAssertEqual(s.center.y, 10, accuracy: 1e-6)
+    }
+
+    func testFragmentPasteRemapsIDsAndConnectors() {
+        let store = storeWith([CGRect(x: 0, y: 0, width: 20, height: 20),
+                               CGRect(x: 100, y: 0, width: 20, height: 20)])
+        let a = store.doc.shapes[0].id, b = store.doc.shapes[1].id
+        store.perform { $0.connectors = [Connector(fromShape: a, fromPort: 1, toShape: b, toPort: 3)] }
+        let fragment = store.makeFragment()!
+        XCTAssertEqual(fragment.connectors.count, 1)
+
+        XCTAssertTrue(store.insertFragment(fragment, offset: 20))
+        XCTAssertEqual(store.doc.shapes.count, 4)
+        XCTAssertEqual(store.doc.connectors.count, 2)
+        XCTAssertEqual(Set(store.doc.shapes.map(\.id)).count, 4)
+        let pasted = store.doc.connectors[1]
+        XCTAssertTrue(store.selection.contains(pasted.fromShape) && store.selection.contains(pasted.toShape))
+        XCTAssertEqual(store.doc.shape(pasted.fromShape)?.rect.minX, 20)
+    }
+
+    func testInvalidFragmentIsRejected() {
+        let store = DocumentStore()
+        var bad = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 10, height: 10))
+        bad.rotation = .nan
+        XCTAssertFalse(store.insertFragment(ClipboardFragment(shapes: [bad], connectors: []), offset: 0))
+        XCTAssertTrue(store.doc.shapes.isEmpty)
+    }
+}
