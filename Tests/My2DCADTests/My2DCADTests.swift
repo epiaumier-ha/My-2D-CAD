@@ -198,7 +198,8 @@ final class StencilTests: XCTestCase {
         for kind in ShapeKind.allCases {
             let parts = kind.paths(in: r)
             XCTAssertFalse(parts.outline.isEmpty, "\(kind) n'a pas de tracé")
-            let b = parts.fill.boundingRect.union(parts.stroke.boundingRect)
+            // boundingBoxOfPath : enveloppe exacte, sans les points de contrôle des courbes.
+            let b = parts.fill.cgPath.boundingBoxOfPath.union(parts.stroke.cgPath.boundingBoxOfPath)
             XCTAssertTrue(r.insetBy(dx: -1, dy: -1).contains(b), "\(kind) déborde de son cadre : \(b)")
         }
     }
