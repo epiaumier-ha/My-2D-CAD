@@ -365,3 +365,74 @@ final class PathTests: XCTestCase {
         XCTAssertThrowsError(try DiagramIO.validate(Diagram(shapes: [s])))
     }
 }
+
+@MainActor
+final class LineStyleTests: XCTestCase {
+    func testOldFilesGetDefaultStyles() throws {
+        let a = UUID(), b = UUID()
+        let json = """
+        {"version":1,"shapes":[
+          {"id":"\(a.uuidString)","kind":"rectangle","rect":[[0,0],[10,10]],"text":"","fill":{"r":1,"g":1,"b":1,"a":1}},
+          {"id":"\(b.uuidString)","kind":"line","rect":[[0,0],[10,10]],"text":"","fill":{"r":1,"g":0,"b":0,"a":1},
+           "points":[[0,0],[10,10]]}],
+         "connectors":[{"id":"\(UUID().uuidString)","fromShape":"\(a.uuidString)","fromPort":1,
+                        "toShape":"\(b.uuidString)","toPort":3}]}
+        """
+        let d = try JSONDecoder().decode(Diagram.self, from: Data(json.utf8))
+        XCTAssertNoThrow(try DiagramIO.validate(d))
+        XCTAssertEqual(d.shapes[0].line, LineStyle())
+        XCTAssertEqual(d.shapes[1].line.color, RGBA(r: 1, g: 0, b: 0, a: 1), "couleur d'un ancien trait reprise de « fill »")
+        XCTAssertEqual(d.connectors[0].line.endArrow, .filled)
+    }
+
+    func testStyleAppliesToWholeSelectionInOneUndo() {
+        let store = DocumentStore()
+        let s1 = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 10, height: 10))
+        let s2 = Shape(kind: .ellipse, rect: CGRect(x: 50, y: 0, width: 10, height: 10))
+        let c = Connector(fromShape: s1.id, fromPort: 1, toShape: s2.id, toPort: 3)
+        store.perform { $0.shapes = [s1, s2]; $0.connectors = [c] }
+        store.selection = [s1.id, s2.id, c.id]
+        XCTAssertTrue(store.selectionSupportsArrows)
+
+        store.editSelectionLineStyle(key: "width") { $0.width = 3 }
+        store.editSelectionLineStyle(key: "width") { $0.width = 4.5 }   // même réglage : regroupé
+        XCTAssertTrue(store.doc.shapes.allSatisfy { $0.line.width == 4.5 })
+        XCTAssertEqual(store.doc.connectors[0].line.width, 4.5)
+        store.undo()
+        XCTAssertTrue(store.doc.shapes.allSatisfy { $0.line.width == 1.5 })
+        XCTAssertEqual(store.doc.connectors[0].line.width, LineStyle.connectorDefault.width)
+    }
+
+    func testPastedConnectorKeepsStyle() {
+        let store = DocumentStore()
+        let s1 = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 10, height: 10))
+        let s2 = Shape(kind: .rectangle, rect: CGRect(x: 50, y: 0, width: 10, height: 10))
+        var c = Connector(fromShape: s1.id, fromPort: 1, toShape: s2.id, toPort: 3)
+        c.line.dash = .dot
+        c.line.beginArrow = .circle
+        store.perform { $0.shapes = [s1, s2]; $0.connectors = [c] }
+        store.selection = [s1.id, s2.id]
+        XCTAssertTrue(store.insertFragment(store.makeFragment()!, offset: 20))
+        XCTAssertEqual(store.doc.connectors[1].line, c.line)
+        XCTAssertNotEqual(store.doc.connectors[1].id, c.id)
+    }
+
+    func testValidationRejectsBadStyle() {
+        var s = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 10, height: 10))
+        s.line.width = .infinity
+        XCTAssertThrowsError(try DiagramIO.validate(Diagram(shapes: [s])))
+        s.line.width = 2
+        s.line.transparency = 1.5
+        XCTAssertThrowsError(try DiagramIO.validate(Diagram(shapes: [s])))
+    }
+
+    func testDashPatternScalesWithWidthAndZoom() {
+        var l = LineStyle()
+        l.width = 2
+        l.dash = .dash
+        XCTAssertEqual(l.strokeStyle(zoom: 2).dash, [16, 12])
+        XCTAssertEqual(l.strokeStyle(zoom: 2).lineWidth, 4)
+        l.dash = .solid
+        XCTAssertTrue(l.strokeStyle(zoom: 1).dash.isEmpty)
+    }
+}

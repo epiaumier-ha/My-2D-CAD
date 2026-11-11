@@ -228,6 +228,27 @@ final class DocumentStore: ObservableObject {
         doc.shapes[i] = s
     }
 
+    /// Applique une modification de trait à toute la sélection (formes et connecteurs),
+    /// en une seule entrée d'historique pour un même réglage.
+    func editSelectionLineStyle(key: String, _ change: (inout LineStyle) -> Void) {
+        let ids = selection
+        guard !ids.isEmpty else { return }
+        var updated = doc
+        for i in updated.shapes.indices where ids.contains(updated.shapes[i].id) && updated.shapes[i].kind != .text {
+            change(&updated.shapes[i].line)
+        }
+        for i in updated.connectors.indices where ids.contains(updated.connectors[i].id) {
+            change(&updated.connectors[i].line)
+        }
+        guard updated != doc else { return }
+        let k = "line-\(key)-" + ids.map(\.uuidString).sorted().joined(separator: ",")
+        if coalesceKey != k {
+            push(doc)
+            coalesceKey = k
+        }
+        doc = updated
+    }
+
     /// Termine l'édition d'un champ de texte (recherche, inspecteur) et rend le clavier au dessin.
     /// La valeur en cours de saisie est validée avant de perdre le focus.
     func endTextEditing() {

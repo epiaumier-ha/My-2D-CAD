@@ -65,6 +65,7 @@ enum DiagramIO {
                     throw DiagramIOError.invalid("nombre de points incorrect")
                 }
             }
+            guard s.line.isValid else { throw DiagramIOError.invalid("style de trait invalide") }
             guard s.rotation.isFinite, abs(s.rotation) <= 360 else { throw DiagramIOError.invalid("rotation invalide") }
             guard s.text.count <= maxTextLength else { throw DiagramIOError.invalid("texte trop long") }
             let c = [s.fill.r, s.fill.g, s.fill.b, s.fill.a]
@@ -76,6 +77,7 @@ enum DiagramIO {
             guard shapeIDs.contains(c.fromShape), shapeIDs.contains(c.toShape) else {
                 throw DiagramIOError.invalid("connecteur orphelin")
             }
+            guard c.line.isValid else { throw DiagramIOError.invalid("style de connecteur invalide") }
             guard (0..<Port.count).contains(c.fromPort), (0..<Port.count).contains(c.toPort) else {
                 throw DiagramIOError.invalid("point de connexion invalide")
             }

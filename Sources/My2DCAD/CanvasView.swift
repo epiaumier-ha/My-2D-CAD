@@ -440,8 +440,23 @@ struct CanvasView: View {
     }
 
     private func drawPathShape(_ s: Shape, in ctx: inout GraphicsContext) {
-        ctx.stroke(screenPath(kind: s.kind, points: s.worldPoints), with: .color(s.fill.color),
-                   style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+        let world = s.worldPoints
+        if s.line.dash != .none {
+            ctx.stroke(screenPath(kind: s.kind, points: world), with: .color(s.line.displayColor),
+                       style: s.line.strokeStyle(zoom: store.zoom))
+        }
+        // Flèches : direction donnée par la tangente à chaque extrémité.
+        let pts = world.map { store.toScreen($0) }
+        if pts.count >= 2 {
+            let beforeEnd = pts.count == 3 ? pts[1] : pts[pts.count - 2]
+            let afterStart = pts[1]
+            drawArrow(s.line.beginArrow, tip: pts[0],
+                      from: afterStart.distance(to: pts[0]) > 0.5 ? afterStart : pts[pts.count - 1],
+                      style: s.line, in: &ctx)
+            drawArrow(s.line.endArrow, tip: pts[pts.count - 1],
+                      from: beforeEnd.distance(to: pts[pts.count - 1]) > 0.5 ? beforeEnd : pts[0],
+                      style: s.line, in: &ctx)
+        }
         guard !s.text.isEmpty, store.editingShapeID != s.id else { return }
         let label = Text(s.text).font(.system(size: 14 * store.zoom)).foregroundColor(.black)
         // Libellé au milieu du tracé, sur un fond blanc pour rester lisible.
@@ -459,15 +474,16 @@ struct CanvasView: View {
         if s.kind != .text {
             let t = rotationTransform(s, screenRect: r)
             let parts = s.kind.paths(in: r)
-            let lineColor = Color(white: 0.25)
+            let lineColor = s.line.displayColor
+            let style = s.line.strokeStyle(zoom: store.zoom)
+            let showLine = s.line.dash != .none
             if !parts.fill.isEmpty {
                 let body = parts.fill.applying(t)
                 ctx.fill(body, with: .color(s.fill.color))
-                ctx.stroke(body, with: .color(lineColor), lineWidth: 1.5)
+                if showLine { ctx.stroke(body, with: .color(lineColor), style: style) }
             }
-            if !parts.stroke.isEmpty {
-                ctx.stroke(parts.stroke.applying(t), with: .color(lineColor),
-                           style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            if !parts.stroke.isEmpty && showLine {
+                ctx.stroke(parts.stroke.applying(t), with: .color(lineColor), style: style)
             }
         }
         let placeholder = s.text.isEmpty && s.kind == .text
@@ -497,22 +513,62 @@ struct CanvasView: View {
         var path = Path()
         path.move(to: pts[0])
         for p in pts.dropFirst() { path.addLine(to: p) }
-        let selected = store.selection.contains(c.id)
-        let color: Color = selected ? accent : Color(white: 0.3)
-        ctx.stroke(path, with: .color(color), lineWidth: selected ? 2.5 : 1.5)
+        if store.selection.contains(c.id) {
+            ctx.stroke(path, with: .color(accent.opacity(0.35)),
+                       style: StrokeStyle(lineWidth: max(CGFloat(c.line.width) * store.zoom, 1) + 6, lineCap: .round))
+        }
+        if c.line.dash != .none {
+            ctx.stroke(path, with: .color(c.line.displayColor), style: c.line.strokeStyle(zoom: store.zoom))
+        }
+        // Flèches orientées selon le premier / dernier segment non nul.
+        let start = pts[0], tip = pts[pts.count - 1]
+        if let next = pts.dropFirst().first(where: { $0.distance(to: start) > 0.5 }) {
+            drawArrow(c.line.beginArrow, tip: start, from: next, style: c.line, in: &ctx)
+        }
+        if let prev = pts.dropLast().last(where: { $0.distance(to: tip) > 0.5 }) {
+            drawArrow(c.line.endArrow, tip: tip, from: prev, style: c.line, in: &ctx)
+        }
+    }
 
-        // Pointe de flèche orientée selon le dernier segment non nul.
-        let tip = pts[pts.count - 1]
-        guard let prev = pts.dropLast().last(where: { $0.distance(to: tip) > 0.5 }) else { return }
-        let len = tip.distance(to: prev)
-        let ux = (tip.x - prev.x) / len, uy = (tip.y - prev.y) / len
-        let base = CGPoint(x: tip.x - ux * 10, y: tip.y - uy * 10)
-        var head = Path()
-        head.move(to: tip)
-        head.addLine(to: CGPoint(x: base.x - uy * 5, y: base.y + ux * 5))
-        head.addLine(to: CGPoint(x: base.x + uy * 5, y: base.y - ux * 5))
-        head.closeSubpath()
-        ctx.fill(head, with: .color(color))
+    /// Pointe de flèche à l'extrémité `tip`, orientée depuis `from` (coordonnées écran).
+    private func drawArrow(_ type: ArrowHead, tip: CGPoint, from: CGPoint, style l: LineStyle,
+                           in ctx: inout GraphicsContext) {
+        guard type != .none else { return }
+        let len = tip.distance(to: from)
+        guard len > 0.01 else { return }
+        let ux = (tip.x - from.x) / len, uy = (tip.y - from.y) / len
+        let size = l.arrowLength(zoom: store.zoom)
+        let half = size * 0.45
+        func at(_ back: CGFloat, _ side: CGFloat) -> CGPoint {
+            CGPoint(x: tip.x - ux * back - uy * side, y: tip.y - uy * back + ux * side)
+        }
+        let shading = GraphicsContext.Shading.color(l.displayColor)
+        switch type {
+        case .none:
+            break
+        case .filled:
+            var p = Path()
+            p.addLines([tip, at(size, half), at(size, -half)])
+            p.closeSubpath()
+            ctx.fill(p, with: shading)
+        case .open:
+            var p = Path()
+            p.move(to: at(size, half))
+            p.addLine(to: tip)
+            p.addLine(to: at(size, -half))
+            ctx.stroke(p, with: shading,
+                       style: StrokeStyle(lineWidth: max(CGFloat(l.width) * store.zoom, 0.75),
+                                          lineCap: .round, lineJoin: .round))
+        case .circle:
+            let r = size * 0.32
+            let c = at(r, 0)
+            ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)), with: shading)
+        case .diamond:
+            var p = Path()
+            p.addLines([tip, at(size / 2, half * 0.8), at(size, 0), at(size / 2, -half * 0.8)])
+            p.closeSubpath()
+            ctx.fill(p, with: shading)
+        }
     }
 
     private func drawSelection(_ ctx: inout GraphicsContext) {

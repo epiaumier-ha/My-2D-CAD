@@ -82,7 +82,7 @@ extension DocumentStore {
     /// Ajout direct (à utiliser à l'intérieur d'une transaction, comme insertShape).
     func insertPath(kind: ShapeKind, from a: CGPoint, to b: CGPoint) {
         guard kind.isPath, doc.shapes.count < DiagramIO.maxShapes else { return }
-        var s = Shape(kind: kind, rect: .zero, fill: Self.defaultLineColor)
+        var s = Shape(kind: kind, rect: .zero, fill: Self.defaultLineColor, line: .pathDefault)
         s.setWorldPoints(Self.initialPathPoints(kind: kind, from: a, to: b))
         doc.shapes.append(s)
         selection = [s.id]

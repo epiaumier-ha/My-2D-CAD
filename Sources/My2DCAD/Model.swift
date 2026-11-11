@@ -50,8 +50,10 @@ struct Shape: Identifiable, Codable, Equatable {
     var rotation: Double = 0
     /// Points d'un trait ou d'une courbe, relatifs à `rect.origin` (vide pour les autres formes).
     var points: [CGPoint] = []
+    /// Attributs du trait (contour des formes, traits, courbes).
+    var line = LineStyle()
 
-    enum CodingKeys: String, CodingKey { case id, kind, rect, text, fill, rotation, points }
+    enum CodingKeys: String, CodingKey { case id, kind, rect, text, fill, rotation, points, line }
 }
 
 extension Shape {
@@ -65,6 +67,9 @@ extension Shape {
         fill = try c.decodeIfPresent(RGBA.self, forKey: .fill) ?? .defaultFill
         rotation = try c.decodeIfPresent(Double.self, forKey: .rotation) ?? 0
         points = try c.decodeIfPresent([CGPoint].self, forKey: .points) ?? []
+        // Anciens fichiers : la couleur d'un trait ou d'une courbe était stockée dans « fill ».
+        line = try c.decodeIfPresent(LineStyle.self, forKey: .line)
+            ?? (kind.isPath ? LineStyle(color: fill, width: 2) : LineStyle())
     }
 }
 
@@ -76,6 +81,21 @@ struct Connector: Identifiable, Codable, Equatable {
     var fromPort: Int
     var toShape: UUID
     var toPort: Int
+    var line = LineStyle.connectorDefault
+
+    enum CodingKeys: String, CodingKey { case id, fromShape, fromPort, toShape, toPort, line }
+}
+
+extension Connector {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        fromShape = try c.decode(UUID.self, forKey: .fromShape)
+        fromPort = try c.decode(Int.self, forKey: .fromPort)
+        toShape = try c.decode(UUID.self, forKey: .toShape)
+        toPort = try c.decode(Int.self, forKey: .toPort)
+        line = try c.decodeIfPresent(LineStyle.self, forKey: .line) ?? .connectorDefault
+    }
 }
 
 struct Diagram: Codable, Equatable {

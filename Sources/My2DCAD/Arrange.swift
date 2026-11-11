@@ -80,7 +80,11 @@ extension DocumentStore {
         }
         let newConnectors = fragment.connectors.compactMap { c -> Connector? in
             guard let a = idMap[c.fromShape], let b = idMap[c.toShape] else { return nil }
-            return Connector(fromShape: a, fromPort: c.fromPort, toShape: b, toPort: c.toPort)
+            var copy = c   // conserve le style du connecteur
+            copy.id = UUID()
+            copy.fromShape = a
+            copy.toShape = b
+            return copy
         }
         do {
             try DiagramIO.validate(Diagram(shapes: newShapes, connectors: newConnectors))

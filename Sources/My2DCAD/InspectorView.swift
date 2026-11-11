@@ -18,10 +18,6 @@ struct InspectorView: View {
                     }
                     if s.kind.isPath {
                         LabeledContent("Type", value: s.kind == .line ? "Trait" : "Courbe")
-                        ColorPicker("Couleur du trait", selection: Binding(
-                            get: { s.fill.color },
-                            set: { c in store.editSelectedShape(key: "fill") { $0.fill = RGBA(color: c) } }),
-                                    supportsOpacity: false)
                     } else if s.kind != .text && !s.kind.isLineArt {
                         ColorPicker("Remplissage", selection: Binding(
                             get: { s.fill.color },
@@ -56,11 +52,87 @@ struct InspectorView: View {
                 }
             }
 
+            if let style = store.selectionLineStyle {
+                lineSection(style)
+            }
+
             if !store.selectedShapes.isEmpty {
                 arrangeSection
             }
         }
         .formStyle(.grouped)
+    }
+
+    // MARK: Trait (couleur, épaisseur, motif, transparence, extrémités, flèches)
+
+    private func lineSection(_ style: LineStyle) -> some View {
+        Section("Trait") {
+            ColorPicker("Couleur", selection: Binding(
+                get: { style.color.color },
+                set: { c in store.editSelectionLineStyle(key: "color") { $0.color = RGBA(color: c) } }),
+                        supportsOpacity: false)
+
+            Picker("Motif", selection: Binding(
+                get: { style.dash },
+                set: { v in store.editSelectionLineStyle(key: "dash") { $0.dash = v } })) {
+                ForEach(DashPattern.allCases) { Text($0.label).tag($0) }
+            }
+
+            Picker("Épaisseur", selection: Binding(
+                get: { style.width },
+                set: { v in store.editSelectionLineStyle(key: "width") { $0.width = v } })) {
+                ForEach(widthChoices(current: style.width), id: \.self) { w in
+                    Text("\(w, specifier: "%g") pt").tag(w)
+                }
+            }
+
+            LabeledContent("Transparence") {
+                HStack {
+                    Slider(value: Binding(
+                        get: { style.transparency },
+                        set: { v in
+                            let t = min(max(v, 0), 1)
+                            store.editSelectionLineStyle(key: "transparency") { $0.transparency = t }
+                        }), in: 0...1)
+                    Text("\(Int((style.transparency * 100).rounded())) %")
+                        .monospacedDigit()
+                        .frame(width: 40, alignment: .trailing)
+                }
+            }
+
+            Picker("Extrémités", selection: Binding(
+                get: { style.cap },
+                set: { v in store.editSelectionLineStyle(key: "cap") { $0.cap = v } })) {
+                ForEach(LineCapStyle.allCases) { Text($0.label).tag($0) }
+            }
+
+            if store.selectionSupportsArrows {
+                Picker("Début", selection: Binding(
+                    get: { style.beginArrow },
+                    set: { v in store.editSelectionLineStyle(key: "begin") { $0.beginArrow = v } })) {
+                    ForEach(ArrowHead.allCases) { Text($0.label).tag($0) }
+                }
+                Picker("Fin", selection: Binding(
+                    get: { style.endArrow },
+                    set: { v in store.editSelectionLineStyle(key: "end") { $0.endArrow = v } })) {
+                    ForEach(ArrowHead.allCases) { Text($0.label).tag($0) }
+                }
+                Picker("Taille des flèches", selection: Binding(
+                    get: { style.arrowSize },
+                    set: { v in store.editSelectionLineStyle(key: "arrowSize") { $0.arrowSize = v } })) {
+                    ForEach(LineStyle.arrowSizePresets, id: \.0) { size, label in
+                        Text(label).tag(size)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Épaisseurs proposées, plus la valeur actuelle si elle n'est pas dans la liste.
+    private func widthChoices(current: Double) -> [Double] {
+        var list = LineStyle.widthPresets
+        if !list.contains(current) { list.append(current); list.sort() }
+        return list
     }
 
     private var arrangeSection: some View {

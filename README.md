@@ -11,6 +11,7 @@ Application de dessin 2D inspirée de Microsoft Visio (macOS 14+, Swift 5.9, Swi
   organigramme (13 formes), réseau (9 icônes), électricité (11 symboles IEC).
 - **Texte sur place** : double-clic sur une forme (ou Entrée / F2), Entrée pour valider, ⌥Entrée pour une nouvelle ligne, Échap pour annuler. Le texte revient à la ligne dans la forme.
 - **Traits et courbes** : outils Trait (Maj = 45°) et Courbe (Bézier, poignée ronde pour la courbure) ; extrémités déplaçables, couleur du trait dans l'inspecteur.
+- **Attributs de trait** (section « Trait » de l'inspecteur, appliqués à toute la sélection) : couleur, motif (continu, tirets, pointillés, tiret-point, tirets longs, aucun), épaisseur (0,25 à 8 pt), transparence, extrémités, flèches de début et de fin (ouverte, pleine, cercle, losange) et leur taille, pour les formes, traits, courbes et connecteurs.
 - Formes : rectangle, ellipse, losange, texte (clic = taille par défaut, glisser = taille libre).
 - Sélection (clic, Maj+clic, rectangle de sélection), déplacement, redimensionnement par les coins.
 - Connecteurs orthogonaux collés aux points de connexion (haut/droite/bas/gauche) : ils suivent les formes.
@@ -25,6 +26,7 @@ Application de dessin 2D inspirée de Microsoft Visio (macOS 14+, Swift 5.9, Swi
 - `Model.swift` : données (Shape, Connector, Diagram), indépendantes du rendu.
 - `Geometry.swift` : rotation, hit-test, points de connexion, routage.
 - `ShapeLibrary.swift` : tracés vectoriels de chaque type de forme.
+- `LineStyle.swift` : attributs de trait et leur rendu.
 - `Paths.swift` : traits et courbes (points, échantillonnage, sélection).
 - `Stencils.swift` : catalogue des bibliothèques et panneau latéral.
 - `Arrange.swift` : presse-papiers, alignement, répartition, rotation de la sélection.
