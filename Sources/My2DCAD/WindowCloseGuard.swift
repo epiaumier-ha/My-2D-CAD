@@ -31,6 +31,7 @@ struct WindowCloseGuard: NSViewRepresentable {
         }
     }
 
+    @MainActor
     final class CloseProxy: NSObject, NSWindowDelegate {
         nonisolated(unsafe) weak var original: NSWindowDelegate?
         private let shouldClose: @MainActor () -> Bool
@@ -44,11 +45,11 @@ struct WindowCloseGuard: NSViewRepresentable {
             return original?.windowShouldClose?(sender) ?? true
         }
 
-        override func responds(to aSelector: Selector!) -> Bool {
+        nonisolated override func responds(to aSelector: Selector!) -> Bool {
             super.responds(to: aSelector) || (original?.responds(to: aSelector) ?? false)
         }
 
-        override func forwardingTarget(for aSelector: Selector!) -> Any? {
+        nonisolated override func forwardingTarget(for aSelector: Selector!) -> Any? {
             if let original, original.responds(to: aSelector) { return original }
             return super.forwardingTarget(for: aSelector)
         }
