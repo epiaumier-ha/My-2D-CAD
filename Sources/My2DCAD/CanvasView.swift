@@ -113,6 +113,8 @@ struct CanvasView: View {
     }
 
     private func begin(at screen: CGPoint) {
+        // Un clic dans le dessin lui rend le clavier (Suppr, flèches, Échap).
+        store.endTextEditing()
         let w = store.toWorld(screen)
         store.beginTransaction()
 

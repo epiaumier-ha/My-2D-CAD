@@ -172,7 +172,10 @@ private struct StencilTile: View {
         .padding(4)
         .contentShape(Rectangle())
         .help(item.name)
-        .onTapGesture { store.insertStencil(item, centeredAt: store.visibleCenter) }
+        .onTapGesture {
+            store.endTextEditing()
+            store.insertStencil(item, centeredAt: store.visibleCenter)
+        }
         .draggable(StencilCatalog.dragPayload(item)) {
             StencilPreview(item: item).frame(width: 64, height: 48)
         }

@@ -216,6 +216,13 @@ final class DocumentStore: ObservableObject {
         doc.shapes[i] = s
     }
 
+    /// Termine l'édition d'un champ de texte (recherche, inspecteur) et rend le clavier au dessin.
+    /// La valeur en cours de saisie est validée avant de perdre le focus.
+    func endTextEditing() {
+        guard let window = NSApp.keyWindow, window.firstResponder is NSText else { return }
+        window.makeFirstResponder(nil)
+    }
+
     // MARK: Hit-testing
 
     func hitShape(at world: CGPoint) -> Shape? {

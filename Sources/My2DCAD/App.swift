@@ -106,7 +106,10 @@ struct My2DCADApp: App {
                 Button("Tout sélectionner") {
                     if !forwardToTextEditor(#selector(NSText.selectAll(_:))) { store.selectAll() }
                 }.keyboardShortcut("a")
-                Button("Supprimer la sélection") { store.deleteSelection() }
+                Button("Supprimer la sélection") {
+                    if !forwardToTextEditor(#selector(NSText.delete(_:))) { store.deleteSelection() }
+                }
+                .disabled(store.selection.isEmpty)
                     .keyboardShortcut(.delete, modifiers: .command)
             }
             CommandMenu("Disposition") {
