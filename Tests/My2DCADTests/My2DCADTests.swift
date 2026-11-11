@@ -338,10 +338,10 @@ final class PathTests: XCTestCase {
         store.rotateSelection(by: 90)
         let p = store.doc.shape(id)!.worldPoints
         XCTAssertEqual(store.doc.shape(id)!.rotation, 0)
-        XCTAssertEqual(p[0].x, 70, accuracy: 1e-3)
-        XCTAssertEqual(p[0].y, -30, accuracy: 1e-3)
-        XCTAssertEqual(p[1].x, 70, accuracy: 1e-3)
-        XCTAssertEqual(p[1].y, 70, accuracy: 1e-3)
+        // Le trait horizontal devient vertical, de même longueur, autour du centre de la sélection.
+        XCTAssertEqual(p[0].x, p[1].x, accuracy: 1e-3)
+        XCTAssertEqual(p[1].y - p[0].y, 100, accuracy: 1e-3)
+        XCTAssertEqual(p[0].x, 70, accuracy: 1)
     }
 
     func testPathsSurviveSaveAndCopy() throws {
