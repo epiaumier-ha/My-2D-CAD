@@ -246,3 +246,49 @@ final class StencilTests: XCTestCase {
         XCTAssertEqual(try DiagramIO.load(from: url), d)
     }
 }
+
+@MainActor
+final class TextEditingTests: XCTestCase {
+    private func storeWithShape() -> (DocumentStore, UUID) {
+        let store = DocumentStore()
+        let s = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 100, height: 50), text: "Avant")
+        store.perform { $0.shapes = [s] }
+        return (store, s.id)
+    }
+
+    func testCommitIsOneUndoStep() {
+        let (store, id) = storeWithShape()
+        store.startTextEditing(id)
+        XCTAssertEqual(store.editingText, "Avant")
+        store.editingText = "Après\nsur deux lignes"
+        store.commitTextEditing()
+        XCTAssertNil(store.editingShapeID)
+        XCTAssertEqual(store.doc.shape(id)?.text, "Après\nsur deux lignes")
+        store.undo()
+        XCTAssertEqual(store.doc.shape(id)?.text, "Avant")
+    }
+
+    func testCancelKeepsText() {
+        let (store, id) = storeWithShape()
+        store.startTextEditing(id)
+        store.editingText = "Abandonné"
+        store.cancelTextEditing()
+        store.commitTextEditing()   // sans effet : l'éditeur est fermé
+        XCTAssertEqual(store.doc.shape(id)?.text, "Avant")
+    }
+
+    func testTextIsTruncatedToLimit() {
+        let (store, id) = storeWithShape()
+        store.startTextEditing(id)
+        store.editingText = String(repeating: "x", count: DiagramIO.maxTextLength + 50)
+        store.commitTextEditing()
+        XCTAssertEqual(store.doc.shape(id)?.text.count, DiagramIO.maxTextLength)
+    }
+
+    func testUndoClosesEditor() {
+        let (store, id) = storeWithShape()
+        store.startTextEditing(id)
+        store.undo()
+        XCTAssertNil(store.editingShapeID)
+    }
+}

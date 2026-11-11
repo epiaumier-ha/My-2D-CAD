@@ -55,6 +55,10 @@ final class DocumentStore: ObservableObject {
     @Published var selection: Set<UUID> = []
     @Published var tool: Tool = .select
 
+    // Édition du texte d'une forme sur le canevas
+    @Published var editingShapeID: UUID?
+    @Published var editingText = ""
+
     // Vue : écran = monde * zoom + offset
     @Published var zoom: CGFloat = 1
     @Published var offset = CGSize(width: 40, height: 40)
@@ -142,6 +146,7 @@ final class DocumentStore: ObservableObject {
 
     func undo() {
         guard let previous = undoStack.popLast() else { return }
+        editingShapeID = nil
         redoStack.append(doc)
         doc = previous
         isDirty = true
@@ -151,6 +156,7 @@ final class DocumentStore: ObservableObject {
 
     func redo() {
         guard let next = redoStack.popLast() else { return }
+        editingShapeID = nil
         undoStack.append(doc)
         doc = next
         isDirty = true
@@ -321,6 +327,7 @@ final class DocumentStore: ObservableObject {
     }
 
     private func reset(with diagram: Diagram, url: URL?) {
+        editingShapeID = nil
         doc = diagram
         selection = []
         undoStack = []
@@ -399,6 +406,10 @@ final class DocumentStore: ObservableObject {
                 deleteSelection(); return nil
             case 53:
                 tool = .select; selection = []; return nil
+            case 36, 76, 120:
+                // Entrée, Entrée du pavé numérique ou F2 : éditer le texte de la forme sélectionnée.
+                guard selection.count == 1, let id = selection.first, doc.shape(id) != nil else { return e }
+                startTextEditing(id); return nil
             case 123, 124, 125, 126:
                 guard !selection.isEmpty else { return e }
                 let dx: CGFloat = e.keyCode == 123 ? -step : (e.keyCode == 124 ? step : 0)

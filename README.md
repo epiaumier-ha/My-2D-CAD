@@ -9,6 +9,7 @@ Application de dessin 2D inspirée de Microsoft Visio (macOS 14+, Swift 5.9, Swi
 ## Fonctions
 - **Bibliothèques de formes** (panneau de gauche, recherche, glisser-déposer ou clic) :
   organigramme (13 formes), réseau (9 icônes), électricité (11 symboles IEC).
+- **Texte sur place** : double-clic sur une forme (ou Entrée / F2), Entrée pour valider, ⌥Entrée pour une nouvelle ligne, Échap pour annuler. Le texte revient à la ligne dans la forme.
 - Formes : rectangle, ellipse, losange, texte (clic = taille par défaut, glisser = taille libre).
 - Sélection (clic, Maj+clic, rectangle de sélection), déplacement, redimensionnement par les coins.
 - Connecteurs orthogonaux collés aux points de connexion (haut/droite/bas/gauche) : ils suivent les formes.

@@ -46,14 +46,20 @@ private let minimumShapeSize: CGFloat = 10
 struct CanvasView: View {
     @EnvironmentObject var store: DocumentStore
     @State private var interaction: Interaction?
+    @State private var gestureActive = false
+    /// Dernier clic sur une forme, pour détecter le double-clic.
+    @State private var lastClick: (id: UUID, time: TimeInterval)?
+    @FocusState private var editorFocused: Bool
 
     private let accent = Color.accentColor
 
     var body: some View {
         GeometryReader { geo in
+            ZStack {
             Canvas { ctx, size in
                 render(&ctx, size: size)
             }
+            .multilineTextAlignment(.center)
             .gesture(dragGesture)
             .dropDestination(for: String.self) { items, location in
                 guard let payload = items.first,
@@ -72,8 +78,43 @@ struct CanvasView: View {
             }
             .onAppear { store.canvasSize = geo.size }
             .onChange(of: geo.size) { _, newSize in store.canvasSize = newSize }
+
+            textEditorOverlay
+            }
         }
         .clipped()
+    }
+
+    // MARK: - Éditeur de texte sur place
+
+    /// Champ de saisie posé sur la forme : Entrée valide, ⌥Entrée passe à la ligne, Échap annule.
+    @ViewBuilder
+    private var textEditorOverlay: some View {
+        if let id = store.editingShapeID, let s = store.doc.shape(id) {
+            let r = store.toScreen(s.rect)
+            let below = s.kind.labelPlacement == .below
+            let width = below ? max(r.width * 2, 140) : max(r.width - 8, 100)
+            let center = below ? CGPoint(x: r.midX, y: r.maxY + 16 * store.zoom) : CGPoint(x: r.midX, y: r.midY)
+            TextField("Texte", text: $store.editingText, axis: .vertical)
+                .textFieldStyle(.plain)
+                .multilineTextAlignment(.center)
+                .font(.system(size: max(14 * store.zoom, 9)))
+                .foregroundColor(.black)
+                .lineLimit(1...12)
+                .padding(4)
+                .frame(width: width)
+                .background(RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.95)))
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(accent, lineWidth: 1.5))
+                .position(center)
+                .focused($editorFocused)
+                .onSubmit { store.commitTextEditing() }
+                .onExitCommand { store.cancelTextEditing() }
+                .onAppear { editorFocused = true }
+                .onChange(of: editorFocused) { _, focused in
+                    if !focused { store.commitTextEditing() }
+                }
+                .id(id)
+        }
     }
 
     // MARK: - Poignées
@@ -104,16 +145,22 @@ struct CanvasView: View {
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { v in
-                if interaction == nil { begin(at: v.startLocation) }
+                // begin() une seule fois par geste, même si aucune interaction n'a démarré.
+                if !gestureActive {
+                    gestureActive = true
+                    begin(at: v.startLocation)
+                }
                 update(v)
             }
             .onEnded { v in
+                gestureActive = false
                 finish(v)
             }
     }
 
     private func begin(at screen: CGPoint) {
-        // Un clic dans le dessin lui rend le clavier (Suppr, flèches, Échap).
+        // Un clic dans le dessin valide le texte en cours et rend le clavier au dessin.
+        if store.editingShapeID != nil { store.commitTextEditing() }
         store.endTextEditing()
         let w = store.toWorld(screen)
         store.beginTransaction()
@@ -147,6 +194,13 @@ struct CanvasView: View {
                 }
             }
             if let s = store.hitShape(at: w) {
+                let now = ProcessInfo.processInfo.systemUptime
+                if !additive, let last = lastClick, last.id == s.id, now - last.time <= NSEvent.doubleClickInterval {
+                    lastClick = nil
+                    store.startTextEditing(s.id)
+                    return
+                }
+                lastClick = (s.id, now)
                 if additive {
                     if store.selection.contains(s.id) { store.selection.remove(s.id) }
                     else { store.selection.insert(s.id) }
@@ -247,6 +301,7 @@ struct CanvasView: View {
             }
             store.insertShape(kind: kind, rect: r)
             store.tool = .select
+            if kind == .text, let id = store.selection.first { store.startTextEditing(id) }
 
         case .connecting(let from, let port, let end):
             if let target = store.hitShape(at: end), target.id != from {
@@ -356,18 +411,22 @@ struct CanvasView: View {
         }
         let placeholder = s.text.isEmpty && s.kind == .text
         let label = placeholder ? "Texte" : s.text
-        if !label.isEmpty {
+        if !label.isEmpty && store.editingShapeID != s.id {
             let t = Text(label)
                 .font(.system(size: 14 * store.zoom))
                 .foregroundColor(placeholder ? .gray : .black)
             var textContext = ctx
             textContext.translateBy(x: r.midX, y: r.midY)
             if s.rotation != 0 { textContext.rotate(by: .radians(Double(s.angle))) }
-            if s.kind.labelPlacement == .below {
-                textContext.draw(t, at: CGPoint(x: 0, y: r.height / 2 + 4), anchor: .top)
-            } else {
-                textContext.draw(t, at: .zero, anchor: .center)
-            }
+            // Retour à la ligne automatique : dans la forme, ou sur deux largeurs sous une icône.
+            let below = s.kind.labelPlacement == .below
+            let maxWidth = below ? max(r.width * 2, 120 * store.zoom) : max(r.width - 8 * store.zoom, 20)
+            let resolved = textContext.resolve(t)
+            let size = resolved.measure(in: CGSize(width: maxWidth, height: .greatestFiniteMagnitude))
+            let origin = below
+                ? CGPoint(x: -size.width / 2, y: r.height / 2 + 4)
+                : CGPoint(x: -size.width / 2, y: -size.height / 2)
+            textContext.draw(resolved, in: CGRect(origin: origin, size: size))
         }
     }
 
