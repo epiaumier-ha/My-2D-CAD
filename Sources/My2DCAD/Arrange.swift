@@ -206,3 +206,104 @@ extension DocumentStore {
         }
     }
 }
+
+// MARK: - Ordre de superposition
+
+enum StackingOrder: CaseIterable {
+    case front, forward, backward, back
+
+    var label: String {
+        switch self {
+        case .front: return "Mettre au premier plan"
+        case .forward: return "Avancer"
+        case .backward: return "Reculer"
+        case .back: return "Mettre à l'arrière-plan"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .front: return "square.3.layers.3d.top.filled"
+        case .forward: return "square.2.layers.3d.top.filled"
+        case .backward: return "square.2.layers.3d.bottom.filled"
+        case .back: return "square.3.layers.3d.bottom.filled"
+        }
+    }
+}
+
+@MainActor
+extension DocumentStore {
+    /// Change l'ordre de dessin des formes sélectionnées (l'ordre relatif entre elles est conservé).
+    /// Les connecteurs restent toujours sous les formes.
+    func reorderSelection(_ order: StackingOrder) {
+        let ids = selection
+        guard doc.shapes.contains(where: { ids.contains($0.id) }) else { return }
+        perform { d in
+            switch order {
+            case .front:
+                let moved = d.shapes.filter { ids.contains($0.id) }
+                d.shapes = d.shapes.filter { !ids.contains($0.id) } + moved
+            case .back:
+                let moved = d.shapes.filter { ids.contains($0.id) }
+                d.shapes = moved + d.shapes.filter { !ids.contains($0.id) }
+            case .forward:
+                // Chaque forme sélectionnée passe au-dessus de sa voisine non sélectionnée.
+                var i = d.shapes.count - 2
+                while i >= 0 {
+                    if ids.contains(d.shapes[i].id) && !ids.contains(d.shapes[i + 1].id) {
+                        d.shapes.swapAt(i, i + 1)
+                    }
+                    i -= 1
+                }
+            case .backward:
+                var i = 1
+                while i < d.shapes.count {
+                    if ids.contains(d.shapes[i].id) && !ids.contains(d.shapes[i - 1].id) {
+                        d.shapes.swapAt(i, i - 1)
+                    }
+                    i += 1
+                }
+            }
+        }
+    }
+
+    /// Inverse le sens des connecteurs sélectionnés (la flèche change d'extrémité).
+    func reverseSelectedConnectors() {
+        let ids = selection
+        perform { d in
+            for i in d.connectors.indices where ids.contains(d.connectors[i].id) {
+                let c = d.connectors[i]
+                d.connectors[i].fromShape = c.toShape
+                d.connectors[i].fromPort = c.toPort
+                d.connectors[i].toShape = c.fromShape
+                d.connectors[i].toPort = c.fromPort
+            }
+        }
+    }
+
+    /// Recolle une extrémité d'un connecteur sur une autre forme (glisser de sa poignée).
+    /// Modification directe : à appeler dans une transaction (beginTransaction / commitTransaction).
+    @discardableResult
+    func reconnect(connector id: UUID, start: Bool, to shape: UUID, port: Int) -> Bool {
+        guard let i = doc.connectors.firstIndex(where: { $0.id == id }),
+              let target = doc.shape(shape), !target.kind.isPath,
+              (0..<Port.count).contains(port) else { return false }
+        let c = doc.connectors[i]
+        guard (start ? c.toShape : c.fromShape) != shape else { return false }   // pas de boucle sur une forme
+        if start {
+            doc.connectors[i].fromShape = shape
+            doc.connectors[i].fromPort = port
+        } else {
+            doc.connectors[i].toShape = shape
+            doc.connectors[i].toPort = port
+        }
+        return true
+    }
+
+    /// Nom court d'une forme pour l'inspecteur : son texte, sinon son type.
+    func shapeLabel(_ id: UUID) -> String {
+        guard let s = doc.shape(id) else { return "—" }
+        let text = s.text.split(separator: "\n").first.map(String.init) ?? ""
+        return text.isEmpty ? s.kind.displayName : text
+    }
+}

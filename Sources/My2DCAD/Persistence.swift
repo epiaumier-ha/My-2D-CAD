@@ -65,6 +65,10 @@ enum DiagramIO {
                     throw DiagramIOError.invalid("nombre de points incorrect")
                 }
             }
+            guard s.textStyle.isValid else { throw DiagramIOError.invalid("style de texte invalide") }
+            guard s.fillTransparency.isFinite, (0...1).contains(s.fillTransparency) else {
+                throw DiagramIOError.invalid("transparence invalide")
+            }
             guard s.line.isValid else { throw DiagramIOError.invalid("style de trait invalide") }
             guard s.rotation.isFinite, abs(s.rotation) <= 360 else { throw DiagramIOError.invalid("rotation invalide") }
             guard s.text.count <= maxTextLength else { throw DiagramIOError.invalid("texte trop long") }

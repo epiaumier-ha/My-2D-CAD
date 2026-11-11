@@ -52,8 +52,24 @@ struct Shape: Identifiable, Codable, Equatable {
     var points: [CGPoint] = []
     /// Attributs du trait (contour des formes, traits, courbes).
     var line = LineStyle()
+    /// Mise en forme du texte.
+    var textStyle = TextStyle()
+    /// Remplissage désactivé (forme transparente, seul le contour est dessiné).
+    var noFill = false
+    /// Transparence du remplissage : 0 = opaque, 1 = invisible.
+    var fillTransparency: Double = 0
 
-    enum CodingKeys: String, CodingKey { case id, kind, rect, text, fill, rotation, points, line }
+    enum CodingKeys: String, CodingKey {
+        case id, kind, rect, text, fill, rotation, points, line, textStyle, noFill, fillTransparency
+    }
+
+    /// Couleur de remplissage effective (nil si aucun remplissage).
+    var fillColor: Color? {
+        noFill ? nil : fill.color.opacity(1 - fillTransparency)
+    }
+
+    /// Le remplissage a-t-il un sens pour ce type ? (ni texte, ni trait, ni symbole électrique)
+    var supportsFill: Bool { kind != .text && !kind.isPath && !kind.isLineArt }
 }
 
 extension Shape {
@@ -70,6 +86,9 @@ extension Shape {
         // Anciens fichiers : la couleur d'un trait ou d'une courbe était stockée dans « fill ».
         line = try c.decodeIfPresent(LineStyle.self, forKey: .line)
             ?? (kind.isPath ? LineStyle(color: fill, width: 2) : LineStyle())
+        textStyle = try c.decodeIfPresent(TextStyle.self, forKey: .textStyle) ?? TextStyle()
+        noFill = try c.decodeIfPresent(Bool.self, forKey: .noFill) ?? false
+        fillTransparency = try c.decodeIfPresent(Double.self, forKey: .fillTransparency) ?? 0
     }
 }
 

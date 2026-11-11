@@ -35,6 +35,29 @@ enum Tool: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Raccourci à une lettre (sans modificateur), comme dans les logiciels de dessin.
+    var shortcut: Character {
+        switch self {
+        case .select: return "v"
+        case .pan: return "h"
+        case .rectangle: return "r"
+        case .ellipse: return "e"
+        case .diamond: return "d"
+        case .text: return "t"
+        case .line: return "l"
+        case .curve: return "b"
+        case .connector: return "c"
+        }
+    }
+
+    /// Libellé avec son raccourci, pour les infobulles et les menus.
+    var labelWithShortcut: String { "\(label) (\(String(shortcut).uppercased()))" }
+
+    /// Outils regroupés dans le menu « Dessin » de la barre d'outils.
+    static let drawingTools: [Tool] = [.rectangle, .ellipse, .diamond, .line, .curve]
+
+    var isDrawingTool: Bool { Tool.drawingTools.contains(self) }
+
     var shapeKind: ShapeKind? {
         switch self {
         case .rectangle: return .rectangle
@@ -48,6 +71,12 @@ enum Tool: String, CaseIterable, Identifiable {
     }
 }
 
+/// Position du pointeur en coordonnées monde, observée uniquement par la barre d'état.
+@MainActor
+final class PointerTracker: ObservableObject {
+    @Published var world: CGPoint?
+}
+
 private struct EventBox: @unchecked Sendable {
     let event: NSEvent?
 }
@@ -59,7 +88,11 @@ final class DocumentStore: ObservableObject {
     // Document et sélection
     @Published var doc = Diagram()
     @Published var selection: Set<UUID> = []
-    @Published var tool: Tool = .select
+    @Published var tool: Tool = .select {
+        didSet { if tool.isDrawingTool { lastDrawingTool = tool } }
+    }
+    /// Dernier outil de dessin utilisé (affiché sur le bouton « Dessin »).
+    @Published private(set) var lastDrawingTool: Tool = .rectangle
 
     // Édition du texte d'une forme sur le canevas
     @Published var editingShapeID: UUID?
@@ -89,6 +122,10 @@ final class DocumentStore: ObservableObject {
     /// Nombre de collages successifs depuis la dernière copie (décalage en escalier).
     var pasteCount = 0
     private var monitor: Any?
+    /// Position du pointeur pour la barre d'état (objet séparé : le canevas n'est pas redessiné).
+    let pointer = PointerTracker()
+    /// L'utilisateur a déjà confirmé la fermeture (évite une seconde question en quittant).
+    var closeConfirmed = false
 
     static let fileType = UTType(filenameExtension: "cad2d", conformingTo: .json) ?? .json
 
@@ -228,25 +265,40 @@ final class DocumentStore: ObservableObject {
         doc.shapes[i] = s
     }
 
-    /// Applique une modification de trait à toute la sélection (formes et connecteurs),
-    /// en une seule entrée d'historique pour un même réglage.
-    func editSelectionLineStyle(key: String, _ change: (inout LineStyle) -> Void) {
+    /// Modification groupée de la sélection depuis l'inspecteur : les réglages successifs d'un même
+    /// champ (curseur, saisie) sont regroupés en une seule entrée d'historique.
+    func editSelection(key: String, shapes: ((inout Shape) -> Void)? = nil,
+                       connectors: ((inout Connector) -> Void)? = nil) {
         let ids = selection
         guard !ids.isEmpty else { return }
         var updated = doc
-        for i in updated.shapes.indices where ids.contains(updated.shapes[i].id) && updated.shapes[i].kind != .text {
-            change(&updated.shapes[i].line)
+        if let shapes {
+            for i in updated.shapes.indices where ids.contains(updated.shapes[i].id) { shapes(&updated.shapes[i]) }
         }
-        for i in updated.connectors.indices where ids.contains(updated.connectors[i].id) {
-            change(&updated.connectors[i].line)
+        if let connectors {
+            for i in updated.connectors.indices where ids.contains(updated.connectors[i].id) {
+                connectors(&updated.connectors[i])
+            }
         }
         guard updated != doc else { return }
-        let k = "line-\(key)-" + ids.map(\.uuidString).sorted().joined(separator: ",")
+        let k = "\(key)-" + ids.map(\.uuidString).sorted().joined(separator: ",")
         if coalesceKey != k {
             push(doc)
             coalesceKey = k
         }
         doc = updated
+    }
+
+    /// Applique une modification de trait à toute la sélection (formes et connecteurs).
+    func editSelectionLineStyle(key: String, _ change: @escaping (inout LineStyle) -> Void) {
+        editSelection(key: "line-\(key)",
+                      shapes: { if $0.kind != .text { change(&$0.line) } },
+                      connectors: { change(&$0.line) })
+    }
+
+    /// Applique une modification de mise en forme du texte à toutes les formes sélectionnées.
+    func editSelectionTextStyle(key: String, _ change: @escaping (inout TextStyle) -> Void) {
+        editSelection(key: "text-\(key)", shapes: { change(&$0.textStyle) })
     }
 
     /// Termine l'édition d'un champ de texte (recherche, inspecteur) et rend le clavier au dessin.
@@ -290,6 +342,12 @@ final class DocumentStore: ObservableObject {
         offset = CGSize(width: center.x - (center.x - offset.width) * ratio,
                         height: center.y - (center.y - offset.height) * ratio)
         zoom = newZoom
+    }
+
+    /// Zoom à une valeur donnée (1 = 100 %), autour du centre de la vue.
+    func setZoom(_ value: CGFloat) {
+        guard value.isFinite, value > 0 else { return }
+        zoom(by: value / zoom)
     }
 
     func resetView() {
@@ -405,7 +463,7 @@ final class DocumentStore: ObservableObject {
 
     func installEventMonitor() {
         guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify, .keyDown]) { [weak self] event in
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify, .keyDown, .rightMouseDown]) { [weak self] event in
             guard let self else { return event }
             // Le moniteur local est toujours appelé sur le thread principal ; NSEvent n'est pas
             // Sendable, on le fait donc passer dans une boîte explicitement non vérifiée.
@@ -415,18 +473,34 @@ final class DocumentStore: ObservableObject {
     }
 
     private func handle(_ e: NSEvent) -> NSEvent? {
+        // Dialogues (ouvrir, enregistrer, alertes) et panneaux (nuancier) : on ne touche à rien.
+        if NSApp.modalWindow != nil || e.window is NSPanel { return e }
         switch e.type {
+        case .rightMouseDown:
+            // Clic droit : la forme sous le pointeur est sélectionnée avant l'ouverture du menu contextuel.
+            guard mouseInCanvas, let p = hover, editingShapeID == nil else { return e }
+            let w = toWorld(p)
+            if let s = hitShape(at: w) {
+                if !selection.contains(s.id) { selection = [s.id] }
+            } else if let c = hitConnector(at: w) {
+                if !selection.contains(c.id) { selection = [c.id] }
+            } else {
+                selection = []
+            }
+            return e
         case .magnify:
             guard mouseInCanvas else { return e }
             zoom(by: 1 + e.magnification, around: hover)
             return nil
         case .scrollWheel:
             guard mouseInCanvas else { return e }
+            // Molette classique : deltas en lignes, bien plus petits que ceux du trackpad.
+            let scale: CGFloat = e.hasPreciseScrollingDeltas ? 1 : 10
+            let dx = e.scrollingDeltaX * scale, dy = e.scrollingDeltaY * scale
             if e.modifierFlags.contains(.command) || e.modifierFlags.contains(.option) {
-                zoom(by: CGFloat(exp(Double(e.scrollingDeltaY) * 0.01)), around: hover)
+                zoom(by: CGFloat(exp(Double(dy) * 0.01)), around: hover)
             } else {
-                offset = CGSize(width: offset.width + e.scrollingDeltaX,
-                                height: offset.height + e.scrollingDeltaY)
+                offset = CGSize(width: offset.width + dx, height: offset.height + dy)
             }
             return nil
         case .keyDown:
@@ -438,7 +512,9 @@ final class DocumentStore: ObservableObject {
                 guard !selection.isEmpty else { return e }
                 deleteSelection(); return nil
             case 53:
-                tool = .select; selection = []; return nil
+                // Échap : quitte l'outil en cours, puis désélectionne.
+                if tool != .select { tool = .select } else { selection = [] }
+                return nil
             case 36, 76, 120:
                 // Entrée, Entrée du pavé numérique ou F2 : éditer le texte de la forme sélectionnée.
                 guard selection.count == 1, let id = selection.first, doc.shape(id) != nil else { return e }
@@ -449,6 +525,13 @@ final class DocumentStore: ObservableObject {
                 let dy: CGFloat = e.keyCode == 126 ? -step : (e.keyCode == 125 ? step : 0)
                 nudgeSelection(dx: dx, dy: dy); return nil
             default:
+                // Raccourcis d'outils à une lettre (V, H, C, T, R, E, D, L, B).
+                if e.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+                   let ch = e.charactersIgnoringModifiers?.lowercased().first,
+                   let t = Tool.allCases.first(where: { $0.shortcut == ch }) {
+                    tool = t
+                    return nil
+                }
                 return e
             }
         default:

@@ -12,6 +12,10 @@ Application de dessin 2D inspirée de Microsoft Visio (macOS 14+, Swift 5.9, Swi
 - **Texte sur place** : double-clic sur une forme (ou Entrée / F2), Entrée pour valider, ⌥Entrée pour une nouvelle ligne, Échap pour annuler. Le texte revient à la ligne dans la forme.
 - **Traits et courbes** : outils Trait (Maj = 45°) et Courbe (Bézier, poignée ronde pour la courbure) ; extrémités déplaçables, couleur du trait dans l'inspecteur.
 - **Attributs de trait** (section « Trait » de l'inspecteur, appliqués à toute la sélection) : couleur, motif (continu, tirets, pointillés, tiret-point, tirets longs, aucun), épaisseur (0,25 à 8 pt), transparence, extrémités, flèches de début et de fin (ouverte, pleine, cercle, losange) et leur taille, pour les formes, traits, courbes et connecteurs.
+- **Interface** : outils groupés façon Visio (Pointeur V, Main H, Connecteur C, Texte T, menu Dessin : R, E, D, L, B) ; l'outil reste actif après un dessin (Échap ou V pour revenir à la sélection) ; zoom en % dans la barre d'outils ; barre d'état (outil, position, sélection, zoom).
+- **Inspecteur à onglets** : Forme, Style (remplissage : aucun, couleur, transparence ; trait), Texte (taille, couleur, gras, italique, alignement), Organiser (aligner, répartir, pivoter, ordre).
+- **Ordre de superposition** (⇧⌘] premier plan, ⌘] avancer, ⌘[ reculer, ⇧⌘[ arrière-plan) et **menu contextuel** (clic droit).
+- **Connecteurs** : extrémités déplaçables vers une autre forme, inversion du sens.
 - Formes : rectangle, ellipse, losange, texte (clic = taille par défaut, glisser = taille libre).
 - Sélection (clic, Maj+clic, rectangle de sélection), déplacement, redimensionnement par les coins.
 - Connecteurs orthogonaux collés aux points de connexion (haut/droite/bas/gauche) : ils suivent les formes.
@@ -26,6 +30,8 @@ Application de dessin 2D inspirée de Microsoft Visio (macOS 14+, Swift 5.9, Swi
 - `Model.swift` : données (Shape, Connector, Diagram), indépendantes du rendu.
 - `Geometry.swift` : rotation, hit-test, points de connexion, routage.
 - `ShapeLibrary.swift` : tracés vectoriels de chaque type de forme.
+- `TextStyle.swift` : mise en forme du texte.
+- `StatusBar.swift` / `WindowCloseGuard.swift` : barre d'état, confirmation à la fermeture de la fenêtre.
 - `LineStyle.swift` : attributs de trait et leur rendu.
 - `Paths.swift` : traits et courbes (points, échantillonnage, sélection).
 - `Stencils.swift` : catalogue des bibliothèques et panneau latéral.

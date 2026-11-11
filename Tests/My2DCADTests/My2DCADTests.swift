@@ -436,3 +436,86 @@ final class LineStyleTests: XCTestCase {
         XCTAssertTrue(l.strokeStyle(zoom: 1).dash.isEmpty)
     }
 }
+
+@MainActor
+final class RevisionTests: XCTestCase {
+    private func storeWith(_ n: Int) -> (DocumentStore, [UUID]) {
+        let store = DocumentStore()
+        let shapes = (0..<n).map { Shape(kind: .rectangle, rect: CGRect(x: CGFloat($0) * 50, y: 0, width: 40, height: 40)) }
+        store.perform { $0.shapes = shapes }
+        return (store, shapes.map(\.id))
+    }
+
+    func testStackingOrder() {
+        let (store, ids) = storeWith(4)   // ordre : 0 1 2 3
+        store.selection = [ids[1]]
+        store.reorderSelection(.front)
+        XCTAssertEqual(store.doc.shapes.map(\.id), [ids[0], ids[2], ids[3], ids[1]])
+        store.reorderSelection(.back)
+        XCTAssertEqual(store.doc.shapes.map(\.id), [ids[1], ids[0], ids[2], ids[3]])
+        store.reorderSelection(.forward)
+        XCTAssertEqual(store.doc.shapes.map(\.id), [ids[0], ids[1], ids[2], ids[3]])
+        store.selection = [ids[1], ids[2]]
+        store.reorderSelection(.backward)
+        XCTAssertEqual(store.doc.shapes.map(\.id), [ids[1], ids[2], ids[0], ids[3]])
+        store.undo()
+        XCTAssertEqual(store.doc.shapes.map(\.id), [ids[0], ids[1], ids[2], ids[3]])
+    }
+
+    func testReverseAndReconnect() {
+        let (store, ids) = storeWith(3)
+        let c = Connector(fromShape: ids[0], fromPort: 1, toShape: ids[1], toPort: 3)
+        store.perform { $0.connectors = [c] }
+        store.selection = [c.id]
+        store.reverseSelectedConnectors()
+        XCTAssertEqual(store.doc.connectors[0].fromShape, ids[1])
+        XCTAssertEqual(store.doc.connectors[0].toShape, ids[0])
+
+        store.beginTransaction()
+        XCTAssertTrue(store.reconnect(connector: c.id, start: false, to: ids[2], port: 2))
+        XCTAssertFalse(store.reconnect(connector: c.id, start: false, to: ids[1], port: 0), "boucle refusée")
+        store.commitTransaction()
+        XCTAssertEqual(store.doc.connectors[0].toShape, ids[2])
+        XCTAssertEqual(store.doc.connectors[0].toPort, 2)
+        store.undo()
+        XCTAssertEqual(store.doc.connectors[0].toShape, ids[0])
+    }
+
+    func testTextAndFillStyleOnSelection() {
+        let (store, ids) = storeWith(2)
+        store.selection = Set(ids)
+        store.editSelectionTextStyle(key: "size") { $0.size = 24 }
+        store.editSelectionTextStyle(key: "bold") { $0.bold = true }
+        store.editSelection(key: "noFill", shapes: { $0.noFill = true })
+        XCTAssertTrue(store.doc.shapes.allSatisfy { $0.textStyle.size == 24 && $0.textStyle.bold && $0.noFill })
+        XCTAssertNil(store.doc.shapes[0].fillColor)
+        store.undo()   // annule seulement « noFill »
+        XCTAssertTrue(store.doc.shapes.allSatisfy { !$0.noFill && $0.textStyle.bold })
+    }
+
+    func testNewAttributesSurviveSaveAndValidation() throws {
+        var s = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 10, height: 10), text: "A")
+        s.textStyle = TextStyle(size: 20, color: RGBA(r: 1, g: 0, b: 0, a: 1), bold: true, italic: true, alignment: .right)
+        s.fillTransparency = 0.4
+        let d = Diagram(shapes: [s])
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("rev-\(UUID().uuidString).cad2d")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try DiagramIO.save(d, to: url)
+        XCTAssertEqual(try DiagramIO.load(from: url), d)
+
+        var bad = s
+        bad.textStyle.size = 0
+        XCTAssertThrowsError(try DiagramIO.validate(Diagram(shapes: [bad])))
+        bad = s
+        bad.fillTransparency = 2
+        XCTAssertThrowsError(try DiagramIO.validate(Diagram(shapes: [bad])))
+    }
+
+    func testToolShortcutsAreUnique() {
+        XCTAssertEqual(Set(Tool.allCases.map(\.shortcut)).count, Tool.allCases.count)
+        let store = DocumentStore()
+        store.tool = .ellipse
+        store.tool = .select
+        XCTAssertEqual(store.lastDrawingTool, .ellipse)
+    }
+}

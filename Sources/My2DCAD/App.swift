@@ -12,7 +12,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        DocumentStore.shared.confirmDiscard() ? .terminateNow : .terminateCancel
+        let store = DocumentStore.shared
+        if store.closeConfirmed { return .terminateNow }
+        return store.confirmDiscard() ? .terminateNow : .terminateCancel
     }
 }
 
@@ -26,36 +28,104 @@ struct ContentView: View {
                 StencilPanel().frame(width: 210)
                 Divider()
             }
-            CanvasView()
+            VStack(spacing: 0) {
+                CanvasView()
+                Divider()
+                StatusBar(pointer: store.pointer)
+            }
             Divider()
-            InspectorView().frame(width: 250)
+            InspectorView().frame(width: 290)
         }
         .navigationTitle(store.title)
+        .background(WindowCloseGuard {
+            let ok = DocumentStore.shared.confirmDiscard()
+            if ok { DocumentStore.shared.closeConfirmed = true }
+            return ok
+        })
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button { showStencils.toggle() } label: { Image(systemName: "sidebar.left") }
                     .help("Afficher ou masquer les bibliothèques de formes")
             }
             ToolbarItem(placement: .principal) {
-                Picker("Outil", selection: $store.tool) {
-                    ForEach(Tool.allCases) { t in
-                        Image(systemName: t.symbol).help(t.label).tag(t)
-                    }
-                }
-                .pickerStyle(.segmented)
+                ToolStrip()
             }
             ToolbarItemGroup {
                 Button { store.undo() } label: { Image(systemName: "arrow.uturn.backward") }
-                    .help("Annuler").disabled(!store.canUndo)
+                    .help("Annuler (⌘Z)").disabled(!store.canUndo)
                 Button { store.redo() } label: { Image(systemName: "arrow.uturn.forward") }
-                    .help("Rétablir").disabled(!store.canRedo)
+                    .help("Rétablir (⇧⌘Z)").disabled(!store.canRedo)
                 Toggle(isOn: $store.snapEnabled) { Image(systemName: "squareshape.split.2x2.dotted") }
                     .help("Magnétisme de la grille")
-                Button { store.fitToContent() } label: { Image(systemName: "arrow.up.left.and.down.right.magnifyingglass") }
-                    .help("Ajuster à la fenêtre")
+                ZoomMenu()
             }
         }
         .onAppear { store.installEventMonitor() }
+    }
+}
+
+/// Outils groupés façon Visio : Pointeur, Main, Connecteur, Texte, puis un menu « Dessin ».
+struct ToolStrip: View {
+    @EnvironmentObject var store: DocumentStore
+
+    var body: some View {
+        HStack(spacing: 2) {
+            toolButton(.select)
+            toolButton(.pan)
+            Divider().frame(height: 18).padding(.horizontal, 4)
+            toolButton(.connector)
+            toolButton(.text)
+            Divider().frame(height: 18).padding(.horizontal, 4)
+            drawingMenu
+        }
+    }
+
+    private func toolButton(_ t: Tool) -> some View {
+        Button { store.tool = t } label: {
+            Image(systemName: t.symbol)
+                .frame(width: 30, height: 24)
+                .background(RoundedRectangle(cornerRadius: 5)
+                    .fill(store.tool == t ? Color.accentColor.opacity(0.25) : Color.clear))
+        }
+        .buttonStyle(.plain)
+        .help(t.labelWithShortcut)
+    }
+
+    /// Bouton partagé : un clic reprend le dernier outil de dessin, la flèche ouvre la liste.
+    private var drawingMenu: some View {
+        let current = store.lastDrawingTool
+        return Menu {
+            ForEach(Tool.drawingTools) { t in
+                Button { store.tool = t } label: { Label(t.labelWithShortcut, systemImage: t.symbol) }
+            }
+        } label: {
+            Image(systemName: current.symbol)
+        } primaryAction: {
+            store.tool = current
+        }
+        .frame(width: 52)
+        .background(RoundedRectangle(cornerRadius: 5)
+            .fill(store.tool.isDrawingTool ? Color.accentColor.opacity(0.25) : Color.clear))
+        .help("Dessin : \(current.labelWithShortcut) — cliquez sur la flèche pour choisir une autre forme")
+    }
+}
+
+struct ZoomMenu: View {
+    @EnvironmentObject var store: DocumentStore
+    private let presets: [CGFloat] = [0.25, 0.5, 0.75, 1, 1.5, 2, 4]
+
+    var body: some View {
+        Menu {
+            ForEach(presets, id: \.self) { z in
+                Button("\(Int(z * 100)) %") { store.setZoom(z) }
+            }
+            Divider()
+            Button("Ajuster à la fenêtre") { store.fitToContent() }
+        } label: {
+            Text("\(Int((store.zoom * 100).rounded())) %").monospacedDigit()
+        }
+        .frame(width: 80)
+        .help("Zoom")
     }
 }
 
@@ -73,7 +143,8 @@ struct My2DCADApp: App {
     @StateObject private var store = DocumentStore.shared
 
     var body: some Scene {
-        WindowGroup {
+        // Fenêtre unique : le document n'est pas partagé entre plusieurs fenêtres.
+        Window("My2DCAD", id: "main") {
             ContentView()
                 .environmentObject(store)
                 .frame(minWidth: 900, minHeight: 600)
@@ -131,10 +202,21 @@ struct My2DCADApp: App {
                 Button("Faire pivoter à gauche (90°)") { store.rotateSelection(by: -90) }
                     .keyboardShortcut("l", modifiers: .control)
                     .disabled(store.selectedShapes.isEmpty)
+                Divider()
+                Button(StackingOrder.front.label) { store.reorderSelection(.front) }
+                    .keyboardShortcut("]", modifiers: [.command, .shift])
+                Button(StackingOrder.forward.label) { store.reorderSelection(.forward) }
+                    .keyboardShortcut("]", modifiers: .command)
+                Button(StackingOrder.backward.label) { store.reorderSelection(.backward) }
+                    .keyboardShortcut("[", modifiers: .command)
+                Button(StackingOrder.back.label) { store.reorderSelection(.back) }
+                    .keyboardShortcut("[", modifiers: [.command, .shift])
+                Divider()
+                Button("Inverser le sens du connecteur") { store.reverseSelectedConnectors() }
             }
             CommandMenu("Outils") {
                 ForEach(Array(Tool.allCases.enumerated()), id: \.element) { index, tool in
-                    Button(tool.label) { store.tool = tool }
+                    Button(tool.labelWithShortcut) { store.tool = tool }
                         .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
                 }
             }

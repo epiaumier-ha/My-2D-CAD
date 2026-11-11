@@ -15,6 +15,19 @@ struct ShapePaths {
 }
 
 extension ShapeKind {
+    /// Nom affiché dans l'inspecteur et les infobulles.
+    var displayName: String {
+        switch self {
+        case .rectangle: return "Rectangle"
+        case .ellipse: return "Ellipse"
+        case .diamond: return "Losange"
+        case .text: return "Texte"
+        case .line: return "Trait"
+        case .curve: return "Courbe"
+        default: return StencilCatalog.item(for: self)?.name ?? rawValue
+        }
+    }
+
     /// Symboles électriques : traits seuls, sans remplissage.
     var isLineArt: Bool {
         switch self {

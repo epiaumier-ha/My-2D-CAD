@@ -29,6 +29,7 @@ private enum Interaction {
     case moving(origins: [UUID: CGPoint], start: CGPoint, primary: UUID)
     case resizing(original: Shape, handle: Handle)
     case editingPoint(id: UUID, index: Int)
+    case reconnecting(id: UUID, start: Bool, current: CGPoint)
     case rotating(original: Shape, startAngle: CGFloat)
     case drawing(kind: ShapeKind, start: CGPoint, current: CGPoint)
     case connecting(from: UUID, port: Int, current: CGPoint)
@@ -59,9 +60,15 @@ struct CanvasView: View {
             ZStack {
             Canvas { ctx, size in
                 render(&ctx, size: size)
+            } symbols: {
+                // Libellés des formes : vues SwiftUI (police, alignement, retour à la ligne)
+                // dessinées par le canevas dans l'ordre des formes.
+                ForEach(store.doc.shapes) { s in
+                    labelView(s).tag(s.id)
+                }
             }
-            .multilineTextAlignment(.center)
             .gesture(dragGesture)
+            .contextMenu { canvasContextMenu }
             .dropDestination(for: String.self) { items, location in
                 guard let payload = items.first,
                       let item = StencilCatalog.item(fromDragPayload: payload) else { return false }
@@ -73,8 +80,12 @@ struct CanvasView: View {
                 case .active(let p):
                     store.hover = p
                     store.mouseInCanvas = true
+                    store.pointer.world = store.toWorld(p)
+                    cursor(for: store.tool).set()
                 case .ended:
                     store.mouseInCanvas = false
+                    store.pointer.world = nil
+                    NSCursor.arrow.set()
                 }
             }
             .onAppear { store.canvasSize = geo.size }
@@ -98,10 +109,12 @@ struct CanvasView: View {
             let center = s.kind.isPath
                 ? store.toScreen(s.pathMidpoint)
                 : (below ? CGPoint(x: r.midX, y: r.maxY + 16 * store.zoom) : CGPoint(x: r.midX, y: r.midY))
+            let ts = s.textStyle
             TextField("Texte", text: $store.editingText, axis: .vertical)
                 .textFieldStyle(.plain)
-                .multilineTextAlignment(.center)
-                .font(.system(size: max(14 * store.zoom, 9)))
+                .multilineTextAlignment(ts.alignment.textAlignment)
+                .font(.system(size: max(CGFloat(ts.size) * store.zoom, 9), weight: ts.bold ? .bold : .regular))
+                .italic(ts.italic)
                 .foregroundColor(.black)
                 .lineLimit(1...12)
                 .padding(4)
@@ -170,6 +183,7 @@ struct CanvasView: View {
 
         switch store.tool {
         case .pan:
+            NSCursor.closedHand.set()
             interaction = .panning(startOffset: store.offset)
 
         case .rectangle, .ellipse, .diamond, .text, .line, .curve:
@@ -185,6 +199,19 @@ struct CanvasView: View {
 
         case .select:
             let additive = NSEvent.modifierFlags.contains(.shift)
+            if store.selection.count == 1, let id = store.selection.first,
+               let c = store.doc.connectors.first(where: { $0.id == id }),
+               let pts = store.doc.connectorPoints(c), let first = pts.first, let last = pts.last {
+                // Connecteur sélectionné : ses extrémités se déplacent vers une autre forme.
+                if store.toScreen(first).distance(to: screen) <= 8 {
+                    interaction = .reconnecting(id: id, start: true, current: w)
+                    return
+                }
+                if store.toScreen(last).distance(to: screen) <= 8 {
+                    interaction = .reconnecting(id: id, start: false, current: w)
+                    return
+                }
+            }
             if let s = store.singleSelectedShape, s.kind.isPath {
                 // Trait / courbe : poignées des extrémités et du point de contrôle.
                 if let index = s.worldPoints.firstIndex(where: { store.toScreen($0).distance(to: screen) <= 8 }) {
@@ -298,6 +325,9 @@ struct CanvasView: View {
         case .connecting(let from, let port, _):
             interaction = .connecting(from: from, port: port, current: w)
 
+        case .reconnecting(let id, let start, _):
+            interaction = .reconnecting(id: id, start: start, current: w)
+
         case .marquee(let start, _, let additive):
             interaction = .marquee(start: start, current: w, additive: additive)
 
@@ -320,7 +350,7 @@ struct CanvasView: View {
             if start.distance(to: end) * store.zoom >= 5 {
                 store.insertPath(kind: kind, from: start, to: end)
             }
-            store.tool = .select
+            // L'outil reste actif (comme Visio) : Échap ou V pour revenir à la sélection.
 
         case .drawing(let kind, let start, let end):
             var r = rectBetween(start, end)
@@ -332,7 +362,6 @@ struct CanvasView: View {
                 r = CGRect(x: o.x, y: o.y, width: w, height: h)
             }
             store.insertShape(kind: kind, rect: r)
-            store.tool = .select
             if kind == .text, let id = store.selection.first { store.startTextEditing(id) }
 
         case .connecting(let from, let port, let end):
@@ -347,6 +376,11 @@ struct CanvasView: View {
                     store.doc.connectors.append(c)
                     store.selection = [c.id]
                 }
+            }
+
+        case .reconnecting(let id, let start, let end):
+            if let target = store.hitShape(at: end, includePaths: false) {
+                store.reconnect(connector: id, start: start, to: target.id, port: target.nearestPort(to: end))
             }
 
         case .marquee(let start, let end, let additive):
@@ -457,15 +491,9 @@ struct CanvasView: View {
                       from: beforeEnd.distance(to: pts[pts.count - 1]) > 0.5 ? beforeEnd : pts[0],
                       style: s.line, in: &ctx)
         }
-        guard !s.text.isEmpty, store.editingShapeID != s.id else { return }
-        let label = Text(s.text).font(.system(size: 14 * store.zoom)).foregroundColor(.black)
-        // Libellé au milieu du tracé, sur un fond blanc pour rester lisible.
-        let resolved = ctx.resolve(label)
-        let size = resolved.measure(in: CGSize(width: 300 * store.zoom, height: .greatestFiniteMagnitude))
-        let mid = store.toScreen(s.pathMidpoint)
-        let box = CGRect(x: mid.x - size.width / 2, y: mid.y - size.height / 2, width: size.width, height: size.height)
-        ctx.fill(Path(box.insetBy(dx: -3, dy: -1)), with: .color(Color(nsColor: .textBackgroundColor)))
-        ctx.draw(resolved, in: box)
+        guard !s.text.isEmpty, store.editingShapeID != s.id,
+              let label = ctx.resolveSymbol(id: s.id) else { return }
+        ctx.draw(label, at: store.toScreen(s.pathMidpoint), anchor: .center)
     }
 
     private func drawShape(_ s: Shape, in ctx: inout GraphicsContext) {
@@ -479,31 +507,85 @@ struct CanvasView: View {
             let showLine = s.line.dash != .none
             if !parts.fill.isEmpty {
                 let body = parts.fill.applying(t)
-                ctx.fill(body, with: .color(s.fill.color))
+                if let fill = s.fillColor { ctx.fill(body, with: .color(fill)) }
                 if showLine { ctx.stroke(body, with: .color(lineColor), style: style) }
             }
             if !parts.stroke.isEmpty && showLine {
                 ctx.stroke(parts.stroke.applying(t), with: .color(lineColor), style: style)
             }
         }
+        guard store.editingShapeID != s.id, let label = ctx.resolveSymbol(id: s.id) else { return }
+        var textContext = ctx
+        textContext.translateBy(x: r.midX, y: r.midY)
+        if s.rotation != 0 { textContext.rotate(by: .radians(Double(s.angle))) }
+        if s.kind.labelPlacement == .below {
+            textContext.draw(label, at: CGPoint(x: 0, y: r.height / 2 + 4), anchor: .top)
+        } else {
+            textContext.draw(label, at: .zero, anchor: .center)
+        }
+    }
+
+    // MARK: - Libellés
+
+    /// Vue du libellé d'une forme : retour à la ligne dans la largeur de la forme
+    /// (ou sur deux largeurs sous une icône), police et alignement du style de texte.
+    @ViewBuilder
+    private func labelView(_ s: Shape) -> some View {
         let placeholder = s.text.isEmpty && s.kind == .text
-        let label = placeholder ? "Texte" : s.text
-        if !label.isEmpty && store.editingShapeID != s.id {
-            let t = Text(label)
-                .font(.system(size: 14 * store.zoom))
-                .foregroundColor(placeholder ? .gray : .black)
-            var textContext = ctx
-            textContext.translateBy(x: r.midX, y: r.midY)
-            if s.rotation != 0 { textContext.rotate(by: .radians(Double(s.angle))) }
-            // Retour à la ligne automatique : dans la forme, ou sur deux largeurs sous une icône.
+        let content = placeholder ? "Texte" : s.text
+        let ts = s.textStyle
+        let r = store.toScreen(s.rect)
+        let text = Text(content)
+            .italic(ts.italic)
+            .font(ts.font(zoom: store.zoom))
+            .foregroundColor(placeholder ? .gray : ts.color.color)
+        if content.isEmpty {
+            EmptyView()
+        } else if s.kind.isPath {
+            text
+                .multilineTextAlignment(ts.alignment.textAlignment)
+                .padding(.horizontal, 3)
+                .background(Color(nsColor: .textBackgroundColor))
+        } else {
             let below = s.kind.labelPlacement == .below
-            let maxWidth = below ? max(r.width * 2, 120 * store.zoom) : max(r.width - 8 * store.zoom, 20)
-            let resolved = textContext.resolve(t)
-            let size = resolved.measure(in: CGSize(width: maxWidth, height: .greatestFiniteMagnitude))
-            let origin = below
-                ? CGPoint(x: -size.width / 2, y: r.height / 2 + 4)
-                : CGPoint(x: -size.width / 2, y: -size.height / 2)
-            textContext.draw(resolved, in: CGRect(origin: origin, size: size))
+            let width = below ? max(r.width * 2, 120 * store.zoom) : max(r.width - 8 * store.zoom, 20)
+            text
+                .multilineTextAlignment(ts.alignment.textAlignment)
+                .frame(width: width, alignment: ts.alignment.frameAlignment)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: - Menu contextuel et curseurs
+
+    @ViewBuilder
+    private var canvasContextMenu: some View {
+        Button("Couper") { store.cutSelection() }
+        Button("Copier") { store.copySelection() }
+        Button("Coller") { store.paste() }
+        Button("Dupliquer") { store.duplicateSelection() }
+        Button("Supprimer") { store.deleteSelection() }
+        Divider()
+        Button("Modifier le texte") {
+            if store.selection.count == 1, let id = store.selection.first, store.doc.shape(id) != nil {
+                store.startTextEditing(id)
+            }
+        }
+        Divider()
+        ForEach(StackingOrder.allCases, id: \.self) { order in
+            Button(order.label) { store.reorderSelection(order) }
+        }
+        Divider()
+        Button("Faire pivoter à droite (90°)") { store.rotateSelection(by: 90) }
+        Button("Inverser le sens du connecteur") { store.reverseSelectedConnectors() }
+    }
+
+    private func cursor(for tool: Tool) -> NSCursor {
+        switch tool {
+        case .select: return .arrow
+        case .pan: return .openHand
+        case .text: return .iBeam
+        case .rectangle, .ellipse, .diamond, .line, .curve, .connector: return .crosshair
         }
     }
 
@@ -582,6 +664,15 @@ struct CanvasView: View {
             let outline = Path(r.insetBy(dx: -3, dy: -3)).applying(rotationTransform(s, screenRect: r))
             ctx.stroke(outline, with: .color(accent), lineWidth: 1.5)
         }
+        if store.selection.count == 1, let id = store.selection.first,
+           let c = store.doc.connectors.first(where: { $0.id == id }),
+           let pts = store.doc.connectorPoints(c), let first = pts.first, let last = pts.last {
+            for p in [first, last].map({ store.toScreen($0) }) {
+                let box = CGRect(x: p.x - 4.5, y: p.y - 4.5, width: 9, height: 9)
+                ctx.fill(Path(box), with: .color(.white))
+                ctx.stroke(Path(box), with: .color(accent), lineWidth: 1.5)
+            }
+        }
         guard let s = store.singleSelectedShape else { return }
 
         if s.kind.isPath {
@@ -645,6 +736,19 @@ struct CanvasView: View {
             p.addLine(to: store.toScreen(end))
             ctx.stroke(p, with: .color(accent), style: dashed)
             if let target = store.hitShape(at: end, includePaths: false), target.id != from {
+                let r = store.toScreen(target.rect)
+                let outline = Path(r.insetBy(dx: -3, dy: -3)).applying(rotationTransform(target, screenRect: r))
+                ctx.stroke(outline, with: .color(.green), lineWidth: 2)
+            }
+
+        case .reconnecting(let id, let start, let end):
+            guard let c = store.doc.connectors.first(where: { $0.id == id }),
+                  let pts = store.doc.connectorPoints(c), let first = pts.first, let last = pts.last else { return }
+            var p = Path()
+            p.move(to: store.toScreen(start ? last : first))
+            p.addLine(to: store.toScreen(end))
+            ctx.stroke(p, with: .color(accent), style: dashed)
+            if let target = store.hitShape(at: end, includePaths: false) {
                 let r = store.toScreen(target.rect)
                 let outline = Path(r.insetBy(dx: -3, dy: -3)).applying(rotationTransform(target, screenRect: r))
                 ctx.stroke(outline, with: .color(.green), lineWidth: 2)

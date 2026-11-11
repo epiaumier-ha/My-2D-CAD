@@ -1,34 +1,69 @@
 import SwiftUI
 
+/// Onglets de l'inspecteur, sur le modèle du volet « Format de la forme » de Visio.
+enum InspectorTab: String, CaseIterable, Identifiable {
+    case shape = "Forme"
+    case style = "Style"
+    case text = "Texte"
+    case arrange = "Organiser"
+
+    var id: String { rawValue }
+}
+
 struct InspectorView: View {
     @EnvironmentObject var store: DocumentStore
+    @State private var tab: InspectorTab = .shape
 
     var body: some View {
-        Form {
-            if let s = store.singleSelectedShape {
-                Section("Forme") {
-                    TextField("Texte", text: Binding(
-                        get: { s.text },
-                        set: { v in
-                            let limited = String(v.prefix(DiagramIO.maxTextLength))
-                            store.editSelectedShape(key: "text") { $0.text = limited }
-                        }))
-                    if let item = StencilCatalog.item(for: s.kind) {
-                        LabeledContent("Type", value: item.name)
-                    }
-                    if s.kind.isPath {
-                        LabeledContent("Type", value: s.kind == .line ? "Trait" : "Courbe")
-                    } else if s.kind != .text && !s.kind.isLineArt {
-                        ColorPicker("Remplissage", selection: Binding(
-                            get: { s.fill.color },
-                            set: { c in store.editSelectedShape(key: "fill") { $0.fill = RGBA(color: c) } }),
-                                    supportsOpacity: false)
-                    }
+        VStack(spacing: 0) {
+            Picker("Onglet", selection: $tab) {
+                ForEach(InspectorTab.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(8)
+            Divider()
+            Form {
+                switch tab {
+                case .shape: shapeTab
+                case .style: styleTab
+                case .text: textTab
+                case .arrange: arrangeTab
                 }
-                Section("Position et taille") {
-                    field("X", value: s.rect.origin.x) { $0.rect.origin.x = $1 }
-                    field("Y", value: s.rect.origin.y) { $0.rect.origin.y = $1 }
-                    if !s.kind.isPath {
+            }
+            .formStyle(.grouped)
+        }
+    }
+
+    private var selectedConnectors: [Connector] {
+        store.doc.connectors.filter { store.selection.contains($0.id) }
+    }
+
+    private func placeholder(_ message: String) -> some View {
+        Section {
+            Text(message).foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Onglet Forme
+
+    @ViewBuilder
+    private var shapeTab: some View {
+        if let s = store.singleSelectedShape {
+            Section("Forme") {
+                LabeledContent("Type", value: s.kind.displayName)
+                TextField("Texte", text: Binding(
+                    get: { s.text },
+                    set: { v in
+                        let limited = String(v.prefix(DiagramIO.maxTextLength))
+                        store.editSelectedShape(key: "text") { $0.text = limited }
+                    }), axis: .vertical)
+                    .lineLimit(1...4)
+            }
+            Section("Position et taille") {
+                field("X", value: s.rect.origin.x) { $0.rect.origin.x = $1 }
+                field("Y", value: s.rect.origin.y) { $0.rect.origin.y = $1 }
+                if !s.kind.isPath {
                     field("Largeur", value: s.rect.width, minValue: 1) { $0.rect.size.width = $1 }
                     field("Hauteur", value: s.rect.height, minValue: 1) { $0.rect.size.height = $1 }
                     TextField("Rotation (°)", value: Binding<Double>(
@@ -38,39 +73,85 @@ struct InspectorView: View {
                             store.editSelectedShape(key: "rotation") { $0.rotation = normalizedAngle(v) }
                         }),
                               format: .number.precision(.fractionLength(0...1)))
-                    }
-                }
-            } else if store.selection.isEmpty {
-                Section("Document") {
-                    LabeledContent("Formes", value: "\(store.doc.shapes.count)")
-                    LabeledContent("Connecteurs", value: "\(store.doc.connectors.count)")
-                    LabeledContent("Zoom", value: "\(Int((store.zoom * 100).rounded())) %")
-                }
-            } else {
-                Section("Sélection") {
-                    Text("\(store.selection.count) éléments sélectionnés")
                 }
             }
-
-            if let style = store.selectionLineStyle {
-                lineSection(style)
+        } else if store.selection.count == 1, let c = selectedConnectors.first {
+            Section("Connecteur") {
+                LabeledContent("De", value: store.shapeLabel(c.fromShape))
+                LabeledContent("Vers", value: store.shapeLabel(c.toShape))
+                Button("Inverser le sens") { store.reverseSelectedConnectors() }
             }
-
-            if !store.selectedShapes.isEmpty {
-                arrangeSection
+            Section {
+                Text("Glissez une extrémité du connecteur sur une autre forme pour le recoller.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } else if store.selection.isEmpty {
+            Section("Document") {
+                LabeledContent("Formes", value: "\(store.doc.shapes.count)")
+                LabeledContent("Connecteurs", value: "\(store.doc.connectors.count)")
+                LabeledContent("Zoom", value: "\(Int((store.zoom * 100).rounded())) %")
+            }
+            Section("Raccourcis") {
+                Text("V sélection · H main · C connecteur · T texte\nR rectangle · E ellipse · D losange · L trait · B courbe\nÉchap : revenir à la sélection")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            Section("Sélection") {
+                Text(selectionSummary)
             }
         }
-        .formStyle(.grouped)
     }
 
-    // MARK: Trait (couleur, épaisseur, motif, transparence, extrémités, flèches)
+    private var selectionSummary: String {
+        let shapes = store.selectedShapes.count
+        let connectors = selectedConnectors.count
+        var parts: [String] = []
+        if shapes > 0 { parts.append(shapes == 1 ? "1 forme" : "\(shapes) formes") }
+        if connectors > 0 { parts.append(connectors == 1 ? "1 connecteur" : "\(connectors) connecteurs") }
+        return parts.joined(separator: " et ") + (shapes + connectors > 1 ? " sélectionnés" : " sélectionné")
+    }
+
+    // MARK: - Onglet Style (remplissage et trait)
+
+    @ViewBuilder
+    private var styleTab: some View {
+        let fillable = store.selectedShapes.filter(\.supportsFill)
+        if let first = fillable.first {
+            Section("Remplissage") {
+                Toggle("Remplir", isOn: Binding(
+                    get: { !first.noFill },
+                    set: { on in store.editSelection(key: "noFill", shapes: { if $0.supportsFill { $0.noFill = !on } }) }))
+                if !first.noFill {
+                    ColorPicker("Couleur", selection: Binding(
+                        get: { first.fill.color },
+                        set: { c in
+                            let rgba = RGBA(color: c)
+                            store.editSelection(key: "fill", shapes: { if $0.supportsFill { $0.fill = rgba } })
+                        }), supportsOpacity: false)
+                    percentSlider("Transparence", value: first.fillTransparency) { v in
+                        store.editSelection(key: "fillTransparency", shapes: { if $0.supportsFill { $0.fillTransparency = v } })
+                    }
+                }
+            }
+        }
+        if let style = store.selectionLineStyle {
+            lineSection(style)
+        }
+        if fillable.isEmpty && store.selectionLineStyle == nil {
+            placeholder("Sélectionnez une forme, un trait ou un connecteur pour modifier son style.")
+        }
+    }
 
     private func lineSection(_ style: LineStyle) -> some View {
         Section("Trait") {
             ColorPicker("Couleur", selection: Binding(
                 get: { style.color.color },
-                set: { c in store.editSelectionLineStyle(key: "color") { $0.color = RGBA(color: c) } }),
-                        supportsOpacity: false)
+                set: { c in
+                    let rgba = RGBA(color: c)
+                    store.editSelectionLineStyle(key: "color") { $0.color = rgba }
+                }), supportsOpacity: false)
 
             Picker("Motif", selection: Binding(
                 get: { style.dash },
@@ -81,23 +162,13 @@ struct InspectorView: View {
             Picker("Épaisseur", selection: Binding(
                 get: { style.width },
                 set: { v in store.editSelectionLineStyle(key: "width") { $0.width = v } })) {
-                ForEach(widthChoices(current: style.width), id: \.self) { w in
+                ForEach(choices(LineStyle.widthPresets, current: style.width), id: \.self) { w in
                     Text("\(w, specifier: "%g") pt").tag(w)
                 }
             }
 
-            LabeledContent("Transparence") {
-                HStack {
-                    Slider(value: Binding(
-                        get: { style.transparency },
-                        set: { v in
-                            let t = min(max(v, 0), 1)
-                            store.editSelectionLineStyle(key: "transparency") { $0.transparency = t }
-                        }), in: 0...1)
-                    Text("\(Int((style.transparency * 100).rounded())) %")
-                        .monospacedDigit()
-                        .frame(width: 40, alignment: .trailing)
-                }
+            percentSlider("Transparence", value: style.transparency) { v in
+                store.editSelectionLineStyle(key: "transparency") { $0.transparency = v }
             }
 
             Picker("Extrémités", selection: Binding(
@@ -128,25 +199,91 @@ struct InspectorView: View {
         }
     }
 
-    /// Épaisseurs proposées, plus la valeur actuelle si elle n'est pas dans la liste.
-    private func widthChoices(current: Double) -> [Double] {
-        var list = LineStyle.widthPresets
-        if !list.contains(current) { list.append(current); list.sort() }
-        return list
+    // MARK: - Onglet Texte
+
+    @ViewBuilder
+    private var textTab: some View {
+        if let first = store.selectedShapes.first {
+            let ts = first.textStyle
+            if store.selectedShapes.count == 1 {
+                Section("Contenu") {
+                    TextField("Texte", text: Binding(
+                        get: { first.text },
+                        set: { v in
+                            let limited = String(v.prefix(DiagramIO.maxTextLength))
+                            store.editSelectedShape(key: "text") { $0.text = limited }
+                        }), axis: .vertical)
+                        .lineLimit(2...6)
+                    Text("Double-clic sur la forme, Entrée ou F2 pour écrire directement dessus.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Section("Police") {
+                Picker("Taille", selection: Binding(
+                    get: { ts.size },
+                    set: { v in store.editSelectionTextStyle(key: "size") { $0.size = v } })) {
+                    ForEach(choices(TextStyle.sizePresets, current: ts.size), id: \.self) { v in
+                        Text("\(v, specifier: "%g") pt").tag(v)
+                    }
+                }
+                ColorPicker("Couleur", selection: Binding(
+                    get: { ts.color.color },
+                    set: { c in
+                        let rgba = RGBA(color: c)
+                        store.editSelectionTextStyle(key: "color") { $0.color = rgba }
+                    }), supportsOpacity: false)
+                LabeledContent("Style") {
+                    HStack(spacing: 4) {
+                        Toggle(isOn: Binding(
+                            get: { ts.bold },
+                            set: { v in store.editSelectionTextStyle(key: "bold") { $0.bold = v } })) {
+                            Image(systemName: "bold")
+                        }
+                        .help("Gras")
+                        Toggle(isOn: Binding(
+                            get: { ts.italic },
+                            set: { v in store.editSelectionTextStyle(key: "italic") { $0.italic = v } })) {
+                            Image(systemName: "italic")
+                        }
+                        .help("Italique")
+                    }
+                    .toggleStyle(.button)
+                }
+                Picker("Alignement", selection: Binding(
+                    get: { ts.alignment },
+                    set: { v in store.editSelectionTextStyle(key: "alignment") { $0.alignment = v } })) {
+                    ForEach(TextAlign.allCases) { a in
+                        Image(systemName: a.symbol).help(a.label).tag(a)
+                    }
+                }
+                .pickerStyle(.segmented)
+            }
+        } else {
+            placeholder("Sélectionnez une ou plusieurs formes pour mettre leur texte en forme.")
+        }
     }
 
-    private var arrangeSection: some View {
+    // MARK: - Onglet Organiser
+
+    @ViewBuilder
+    private var arrangeTab: some View {
         let count = store.selectedShapes.count
-        return Section("Disposition") {
-            LabeledContent("Aligner") {
+        if count == 0 {
+            placeholder("Sélectionnez des formes pour les aligner, les répartir, les faire pivoter ou changer leur ordre.")
+        } else {
+            Section("Aligner") {
                 HStack(spacing: 2) {
                     ForEach(ShapeAlignment.allCases, id: \.self) { a in
                         iconButton(a.symbol, help: "Aligner \(a.label.lowercased())") { store.align(a) }
-                            .disabled(count < 2)
                     }
                 }
+                .disabled(count < 2)
+                if count < 2 {
+                    Text("Sélectionnez au moins 2 formes.").font(.caption).foregroundStyle(.secondary)
+                }
             }
-            LabeledContent("Répartir") {
+            Section("Répartir") {
                 HStack(spacing: 2) {
                     iconButton("distribute.horizontal.center", help: "Répartir horizontalement") {
                         store.distribute(.horizontal)
@@ -156,22 +293,52 @@ struct InspectorView: View {
                     }
                 }
                 .disabled(count < 3)
+                if count < 3 {
+                    Text("Sélectionnez au moins 3 formes.").font(.caption).foregroundStyle(.secondary)
+                }
             }
-            LabeledContent("Pivoter") {
+            Section("Pivoter") {
                 HStack(spacing: 2) {
-                    iconButton("rotate.left", help: "Faire pivoter de 90° à gauche") { store.rotateSelection(by: -90) }
-                    iconButton("rotate.right", help: "Faire pivoter de 90° à droite") { store.rotateSelection(by: 90) }
+                    iconButton("rotate.left", help: "Faire pivoter de 90° à gauche (⌃L)") { store.rotateSelection(by: -90) }
+                    iconButton("rotate.right", help: "Faire pivoter de 90° à droite (⌃R)") { store.rotateSelection(by: 90) }
+                }
+            }
+            Section("Ordre") {
+                HStack(spacing: 2) {
+                    ForEach(StackingOrder.allCases, id: \.self) { o in
+                        iconButton(o.symbol, help: o.label) { store.reorderSelection(o) }
+                    }
                 }
             }
         }
     }
 
+    // MARK: - Composants
+
     private func iconButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol).frame(width: 22, height: 22)
+            Image(systemName: symbol).frame(width: 24, height: 22)
         }
         .buttonStyle(.borderless)
         .help(help)
+    }
+
+    private func percentSlider(_ title: String, value: Double, set: @escaping (Double) -> Void) -> some View {
+        LabeledContent(title) {
+            HStack {
+                Slider(value: Binding(get: { value }, set: { set(min(max($0, 0), 1)) }), in: 0...1)
+                Text("\(Int((value * 100).rounded())) %")
+                    .monospacedDigit()
+                    .frame(width: 40, alignment: .trailing)
+            }
+        }
+    }
+
+    /// Valeurs proposées, plus la valeur actuelle si elle n'est pas dans la liste.
+    private func choices(_ presets: [Double], current: Double) -> [Double] {
+        var list = presets
+        if !list.contains(current) { list.append(current); list.sort() }
+        return list
     }
 
     private func field(_ label: String, value: CGFloat, minValue: CGFloat = -1_000_000,
