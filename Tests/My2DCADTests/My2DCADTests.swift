@@ -1615,6 +1615,31 @@ final class GridTests: XCTestCase {
         XCTAssertEqual(d.gridSpacingText(zoom: 1), "1 m")
     }
 
+    func testGridIsMetricByDefaultWithPointsAsOption() {
+        var d = Diagram()
+        XCTAssertEqual(d.grid.measure, .metric)
+        d.unit = .inch
+        XCTAssertEqual(d.gridMetricUnit, .mm, "page en pouces : grille en millimètres")
+        XCTAssertEqual(d.gridMeasure(d.gridStep(zoom: 1)), 5, accuracy: 1e-9)
+        XCTAssertEqual(d.gridSpacingText(zoom: 1), "5 mm")
+        d.unit = .cm
+        XCTAssertEqual(d.gridSpacingText(zoom: 1), "0,5 cm")
+        d.scale = 50
+        XCTAssertEqual(d.gridSpacingText(zoom: 1), "50 cm", "l'échelle 1:50 agrandit la grille")
+
+        d.grid.measure = .points
+        XCTAssertEqual(d.gridStep(zoom: 1), 20, accuracy: 1e-9, "12 pt → 20 pt, sans échelle")
+        XCTAssertEqual(d.gridStep(zoom: 2), 10, accuracy: 1e-9)
+        XCTAssertEqual(d.gridSpacingText(zoom: 1), "20 pt")
+        d.grid.mode = .fixed
+        d.grid.fixedSpacing = Double(d.gridWorldLength(15))
+        XCTAssertEqual(d.gridStep(zoom: 3), 15, accuracy: 1e-9)
+
+        let old = try? JSONDecoder().decode(GridSettings.self, from: Data(#"{"visible":false}"#.utf8))
+        XCTAssertEqual(old?.measure, .metric, "anciens réglages : grille métrique")
+        XCTAssertEqual(old?.visible, false)
+    }
+
     func testFixedGridDrivesSnapAndIsSaved() throws {
         let store = DocumentStore()
         store.updatePageSettings { $0.grid.mode = .fixed; $0.grid.fixedSpacing = 25; $0.grid.subdivisions = 4 }
@@ -1642,7 +1667,10 @@ final class GridTests: XCTestCase {
     func testAssistantCanSetTheGrid() {
         let store = DocumentStore()
         let tools = AssistantToolbox(store: store)
-        let out = tools.run("set_page", ["grid_spacing": 20, "grid_visible": false])
+        var out = tools.run("set_page", ["grid_unit": "points", "grid_spacing": 18])
+        XCTAssertFalse(out.isError, out.result)
+        XCTAssertEqual(store.gridSize, 18, accuracy: 1e-9)
+        out = tools.run("set_page", ["grid_unit": "metric", "grid_spacing": 20, "grid_visible": false])
         XCTAssertFalse(out.isError, out.result)
         XCTAssertEqual(store.doc.grid.mode, .fixed)
         XCTAssertFalse(store.doc.grid.visible)

@@ -89,11 +89,6 @@ extension Diagram {
         return s == "-0" ? "0" : s
     }
 
-    /// Espacement de la grille affichée, dans l'unité de la page : « 5 mm ».
-    func gridSpacingText(zoom: CGFloat) -> String {
-        Diagram.formatCompact(measure(gridStep(zoom: zoom))) + " " + unit.symbol
-    }
-
     /// Texte d'une cote : « 123,4 mm ».
     func formatLength(_ worldLength: CGFloat) -> String {
         Diagram.format(measure(worldLength), decimals: precision) + " " + unit.symbol

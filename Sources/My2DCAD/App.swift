@@ -156,6 +156,13 @@ struct My2DCADApp: App {
                     Button("Fixe (réglage dans l'onglet Affichage)") {
                         store.updatePageSettings { $0.grid.mode = .fixed }
                     }
+                    Divider()
+                    Picker("Unité de la grille", selection: Binding(
+                        get: { store.doc.grid.measure },
+                        set: { v in store.updatePageSettings { $0.grid.measure = v } })) {
+                        Text("Métrique").tag(GridMeasure.metric)
+                        Text("Points").tag(GridMeasure.points)
+                    }
                 }
                 Toggle("Magnétisme de la grille", isOn: $store.snapEnabled)
                 Toggle("Repères d'alignement dynamiques", isOn: $store.guidesEnabled)

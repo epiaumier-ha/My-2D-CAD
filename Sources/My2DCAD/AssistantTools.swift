@@ -140,7 +140,9 @@ struct AssistantToolbox {
                          "custom_width_mm": ["type": "number", "description": "Largeur de la feuille personnalisée, en mm"],
                          "custom_height_mm": ["type": "number", "description": "Hauteur de la feuille personnalisée, en mm"],
                          "grid_visible": ["type": "boolean"],
-                         "grid_spacing": ["type": "number", "description": "Grille fixe : espacement dans l'unité de la page"],
+                         "grid_unit": ["type": "string", "enum": ["metric", "points"],
+                                       "description": "Unité de la grille : metric (défaut, mm/cm/m de la page, échelle comprise) ou points (papier)"],
+                         "grid_spacing": ["type": "number", "description": "Grille fixe : espacement dans l'unité de la grille"],
                          "grid_density": ["type": "string", "enum": ["fine", "normal", "coarse"],
                                           "description": "Grille variable (suit le zoom)"]])),
             AssistantToolbox.tool("select", "Sélectionne des éléments pour les montrer à l'utilisateur.", AssistantToolbox.object(["ids": ids], required: ["ids"])),
@@ -537,6 +539,10 @@ struct AssistantToolbox {
     private func setPage(_ input: JSONValue) throws -> Outcome {
         var unit = d.unit, scale = d.scale, precision = d.precision, setup = d.pageSetup, grid = d.grid
         if let v = input["grid_visible"]?.bool { grid.visible = v }
+        if let v = input["grid_unit"] {
+            guard let m = v.string.flatMap(GridMeasure.init(rawValue:)) else { throw AssistantToolError("Unité de grille inconnue") }
+            grid.measure = m
+        }
         if let v = input["grid_density"] {
             guard let density = v.string.flatMap(GridDensity.init(rawValue:)) else { throw AssistantToolError("Densité inconnue") }
             grid.mode = .variable
@@ -578,8 +584,9 @@ struct AssistantToolbox {
             var target = d
             target.unit = unit
             target.scale = scale
+            target.grid = grid
             guard let x = v.double, x > 0 else { throw AssistantToolError("Espacement positif attendu") }
-            let world = Double(target.worldLength(forMeasure: x))
+            let world = Double(target.gridWorldLength(x))
             guard GridSettings.spacingRange.contains(world) else { throw AssistantToolError("Espacement de grille hors limites") }
             grid.mode = .fixed
             grid.fixedSpacing = world
@@ -631,7 +638,8 @@ struct AssistantToolbox {
             "unit": .string(page.unit.rawValue),
             "scale_1_to": .number(page.scale),
             "grid": ["visible": .bool(page.grid.visible), "mode": .string(page.grid.mode.rawValue),
-                     "spacing": m(store.gridSize)],
+                     "unit": .string(page.grid.measure.rawValue),
+                     "spacing": .string(page.gridSpacingText(zoom: store.zoom))],
             "sheet": ["paper": .string(page.pageSetup.paper.rawValue), "orientation": .string(page.pageSetup.orientation.rawValue),
                       "x": 0, "y": 0, "width": m(page.sheetRect.width), "height": m(page.sheetRect.height)],
             "visible_area": ["x": m(topLeft.x), "y": m(topLeft.y),
