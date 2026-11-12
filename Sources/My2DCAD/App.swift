@@ -21,6 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct ContentView: View {
     @EnvironmentObject var store: DocumentStore
     @State private var showStencils = true
+    @AppStorage("assistant.visible") private var showAssistant = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -34,6 +35,10 @@ struct ContentView: View {
                 PageBar()
                 Divider()
                 StatusBar(pointer: store.pointer)
+            }
+            if showAssistant {
+                Divider()
+                AssistantPanel().frame(width: 320)
             }
             Divider()
             InspectorView().frame(width: 290)
@@ -60,6 +65,8 @@ struct ContentView: View {
                 Toggle(isOn: $store.snapEnabled) { Image(systemName: "squareshape.split.2x2.dotted") }
                     .help("Magnétisme de la grille")
                 ZoomMenu()
+                Toggle(isOn: $showAssistant) { Image(systemName: "sparkles") }
+                    .help("Assistant IA (⌥⌘I)")
             }
         }
         .onAppear { store.installEventMonitor() }
@@ -143,6 +150,7 @@ private func forwardToTextEditor(_ action: Selector) -> Bool {
 struct My2DCADApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = DocumentStore.shared
+    @AppStorage("assistant.visible") private var showAssistant = false
 
     var body: some Scene {
         // Fenêtre unique : le document n'est pas partagé entre plusieurs fenêtres.
@@ -257,6 +265,7 @@ struct My2DCADApp: App {
                 Button("Ajuster à la fenêtre") { store.fitToContent() }.keyboardShortcut("9")
                 Toggle("Magnétisme de la grille", isOn: $store.snapEnabled)
                 Toggle("Repères d'alignement dynamiques", isOn: $store.guidesEnabled)
+                Toggle("Assistant IA", isOn: $showAssistant).keyboardShortcut("i", modifiers: [.command, .option])
                 Toggle("Règles", isOn: $store.showRulers).keyboardShortcut("r", modifiers: [.command, .option])
                 Button("Supprimer tous les repères") { store.removeAllGuides() }
                     .disabled(store.doc.guides.isEmpty)
@@ -276,6 +285,9 @@ struct My2DCADApp: App {
                 Divider()
                 Button("Nouveau calque") { store.addLayer() }
             }
+        }
+        Settings {
+            AssistantSettingsView()
         }
     }
 }

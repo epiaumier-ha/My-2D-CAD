@@ -1365,3 +1365,141 @@ final class ShapeOperationTests: XCTestCase {
         XCTAssertTrue(SVGExporter.svg(for: loaded).contains("fill-rule=\"evenodd\""))
     }
 }
+
+/// Moteur factice : renvoie des réponses écrites à l'avance et garde les requêtes reçues.
+final class ScriptedEngine: AssistantEngine, @unchecked Sendable {
+    private let lock = NSLock()
+    private var replies: [Result<EngineReply, Error>]
+    private(set) var requests: [[JSONValue]] = []
+
+    init(_ replies: [Result<EngineReply, Error>]) { self.replies = replies }
+
+    func respond(system: String, messages: [JSONValue], tools: [JSONValue]) async throws -> EngineReply {
+        lock.lock()
+        defer { lock.unlock() }
+        requests.append(messages)
+        guard !replies.isEmpty else { return EngineReply(content: [["type": "text", "text": "Fin."]], stopReason: "end_turn") }
+        return try replies.removeFirst().get()
+    }
+}
+
+@MainActor
+final class AssistantTests: XCTestCase {
+    private func toolUse(_ name: String, _ input: JSONValue, id: String = "t1") -> JSONValue {
+        ["type": "tool_use", "id": .string(id), "name": .string(name), "input": input]
+    }
+
+    private func wait(_ session: AssistantSession) async {
+        for _ in 0..<500 where session.isWorking { try? await Task.sleep(nanoseconds: 10_000_000) }
+    }
+
+    func testJSONValueRoundTrip() throws {
+        let data = Data(#"{"a":[1,2.5,true,null,"x"],"b":{"c":"é"}}"#.utf8)
+        let v = try JSONDecoder().decode(JSONValue.self, from: data)
+        XCTAssertEqual(v["a"]?.array?[0], .int(1))
+        XCTAssertEqual(v["a"]?.array?[1].double, 2.5)
+        XCTAssertEqual(v["a"]?.array?[2], .bool(true))
+        XCTAssertEqual(v["b"]?["c"]?.string, "é")
+        XCTAssertEqual(try JSONDecoder().decode(JSONValue.self, from: Data(v.jsonText.utf8)), v)
+        XCTAssertEqual(AssistantToolbox.color("#FF8000"), RGBA(r: 1, g: 128.0 / 255, b: 0, a: 1))
+        XCTAssertNil(AssistantToolbox.color("orange"))
+        XCTAssertFalse(AssistantToolbox.specs.isEmpty)
+        XCTAssertTrue(AssistantPrompt.system.contains("rectangle"))
+    }
+
+    func testAddShapesUsesPageUnitsAndScale() throws {
+        let store = DocumentStore()
+        let tools = AssistantToolbox(store: store)
+        var out = tools.run("set_page", ["unit": "m", "scale": 100])
+        XCTAssertFalse(out.isError, out.result)
+        out = tools.run("add_shapes", ["shapes": [["type": "rectangle", "x": 0, "y": 0, "width": 5, "height": 3,
+                                                   "fill": "none", "text": "Pièce"]]])
+        XCTAssertFalse(out.isError, out.result)
+        let s = store.doc.shapes[0]
+        XCTAssertEqual(store.doc.measure(s.rect.width), 5, accuracy: 1e-9)
+        XCTAssertEqual(store.doc.measure(s.rect.height), 3, accuracy: 1e-9)
+        XCTAssertTrue(s.noFill)
+        XCTAssertEqual(s.text, "Pièce")
+        let state = tools.pageState()
+        XCTAssertEqual(state["shapes"]?.array?.first?["width"]?.double ?? 0, 5, accuracy: 1e-6)
+        XCTAssertEqual(state["unit"]?.string, "m")
+    }
+
+    func testToolsConnectUpdateDimensionDelete() throws {
+        let store = DocumentStore()
+        let tools = AssistantToolbox(store: store)
+        store.perform { $0.unit = .pt }
+        XCTAssertFalse(tools.run("add_shapes", ["shapes": [
+            ["type": "rectangle", "x": 0, "y": 0, "width": 100, "height": 50],
+            ["type": "diamond", "x": 0, "y": 150, "width": 100, "height": 60, "fill": "#FFA500"],
+        ]]).isError)
+        let ids = store.doc.shapes.map { AssistantToolbox.shortID($0.id) }
+        var out = tools.run("connect_shapes", ["connections": [["from": .string(ids[0]), "to": .string(ids[1])]]])
+        XCTAssertFalse(out.isError, out.result)
+        XCTAssertEqual(store.doc.connectors.first?.fromPort, 2, "bas de la première forme")
+        XCTAssertEqual(store.doc.connectors.first?.toPort, 0, "haut de la seconde")
+
+        out = tools.run("update_shapes", ["ids": [.string(ids[0])], "changes": ["move_by": [10, 0], "bold": true]])
+        XCTAssertFalse(out.isError, out.result)
+        XCTAssertEqual(store.doc.shapes[0].rect.minX, 10, accuracy: 1e-9)
+        XCTAssertTrue(store.doc.shapes[0].textStyle.bold)
+
+        out = tools.run("add_dimension", ["type": "horizontal", "shape": .string(ids[0]), "offset": 20])
+        XCTAssertFalse(out.isError, out.result)
+        let dim = store.doc.shapes.last!
+        XCTAssertEqual(dim.glue.count, 2)
+        XCTAssertEqual(dim.dimensionLayout!.value, 100, accuracy: 1e-9)
+
+        XCTAssertTrue(tools.run("update_shapes", ["ids": ["zzzzzz"], "changes": ["fill": "#000000"]]).isError)
+        XCTAssertTrue(tools.run("update_shapes", ["ids": [.string(ids[0])], "changes": ["fill": "rouge"]]).isError)
+        XCTAssertTrue(tools.run("add_shapes", ["shapes": [["type": "line", "x": 0, "y": 0]]]).isError)
+        XCTAssertTrue(tools.run("add_shapes", ["shapes": [["type": "rectangle", "x": 0, "y": 0, "width": -5]]]).isError)
+        XCTAssertTrue(tools.run("teleport", [:]).isError)
+
+        out = tools.run("delete_items", ["ids": [.string(ids[1])]])
+        XCTAssertFalse(out.isError, out.result)
+        XCTAssertTrue(store.doc.connectors.isEmpty, "le connecteur part avec la forme")
+        XCTAssertNoThrow(try DiagramIO.validate(store.doc))
+    }
+
+    func testSessionRunsToolsAsOneUndoStep() async throws {
+        let store = DocumentStore()
+        let session = AssistantSession(store: store)
+        let engine = ScriptedEngine([
+            .success(EngineReply(content: [
+                ["type": "text", "text": "Je dessine deux étapes."],
+                toolUse("add_shapes", ["shapes": [["type": "rectangle", "x": 0, "y": 0],
+                                                  ["type": "rectangle", "x": 0, "y": 100]]]),
+            ], stopReason: "tool_use")),
+            .success(EngineReply(content: [toolUse("arrange", ["ids": [], "action": "nope"], id: "t2")], stopReason: "tool_use")),
+            .success(EngineReply(content: [["type": "text", "text": "C'est fait."]], stopReason: "end_turn")),
+        ])
+        session.send("Deux étapes", engine: engine)
+        await wait(session)
+        XCTAssertFalse(session.isWorking)
+        XCTAssertEqual(store.doc.shapes.count, 2)
+        XCTAssertEqual(session.entries.map(\.kind), [.user, .assistant, .action, .assistant])
+        XCTAssertEqual(engine.requests.count, 3)
+        // Le résultat de l'outil est renvoyé au modèle, erreurs comprises.
+        let lastRequest = engine.requests[2]
+        XCTAssertEqual(lastRequest.last?["content"]?.array?.first?["is_error"], .bool(true))
+        XCTAssertTrue(lastRequest[0]["content"]?.array?.first?["text"]?.string?.contains("<page>") ?? false)
+        store.undo()
+        XCTAssertTrue(store.doc.shapes.isEmpty, "toute la réponse s'annule en une fois")
+    }
+
+    func testSessionErrorRollsBackHistory() async throws {
+        let store = DocumentStore()
+        let session = AssistantSession(store: store)
+        let engine = ScriptedEngine([.failure(AssistantError.http(401, "invalid x-api-key"))])
+        session.send("Bonjour", engine: engine)
+        await wait(session)
+        XCTAssertEqual(session.entries.last?.kind, .error)
+        XCTAssertFalse(store.canUndo)
+        // La demande suivante repart d'un historique propre : un seul message utilisateur.
+        let next = ScriptedEngine([])
+        session.send("Encore", engine: next)
+        await wait(session)
+        XCTAssertEqual(next.requests.first?.count, 1)
+    }
+}

@@ -149,6 +149,7 @@ final class DocumentStore: ObservableObject {
     @Published private(set) var redoStack: [HistoryEntry] = []
     private let maxUndo = 100
     private var transactionStart: HistoryEntry?
+    private var assistantEditStart: HistoryEntry?
     private var coalesceKey: String?
 
     // État non publié
@@ -205,6 +206,8 @@ final class DocumentStore: ObservableObject {
     private func snapshot() -> HistoryEntry { HistoryEntry(document: document, page: currentPage) }
 
     private func push(_ snapshot: HistoryEntry) {
+        // Pendant une réponse de l'assistant, une seule entrée est créée à la fin (endAssistantEdit).
+        guard assistantEditStart == nil else { return }
         undoStack.append(snapshot)
         if undoStack.count > maxUndo { undoStack.removeFirst(undoStack.count - maxUndo) }
         redoStack.removeAll()
@@ -232,6 +235,17 @@ final class DocumentStore: ObservableObject {
 
     /// Pour les gestes continus (déplacer, redimensionner, dessiner) : une seule entrée d'historique.
     func beginTransaction() { transactionStart = snapshot() }
+
+    /// Toutes les modifications faites par l'assistant pendant une réponse forment une seule étape d'annulation.
+    func beginAssistantEdit() {
+        if assistantEditStart == nil { assistantEditStart = snapshot() }
+    }
+
+    func endAssistantEdit() {
+        guard let start = assistantEditStart else { return }
+        assistantEditStart = nil
+        if start.document != document { push(start) }
+    }
 
     func commitTransaction() {
         if let start = transactionStart, start.document != document { push(start) }
