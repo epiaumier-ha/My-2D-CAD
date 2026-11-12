@@ -631,6 +631,9 @@ struct Ribbon: View {
             .toggleStyle(.checkbox)
             .controlSize(.small)
         }
+        RibbonGroup(title: "Grille") {
+            GridControls(compact: true)
+        }
         RibbonGroup(title: "Volets") {
             VStack(alignment: .leading, spacing: 4) {
                 Toggle("Formes", isOn: $showShapes)

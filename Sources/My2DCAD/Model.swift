@@ -179,10 +179,12 @@ struct Diagram: Codable, Equatable {
     var guides: [GuideLine] = []
     /// Feuille : format et orientation de la page imprimée.
     var pageSetup = PageSetup()
+    /// Grille : affichage, espacement variable ou fixe, subdivisions.
+    var grid = GridSettings()
 
     enum CodingKeys: String, CodingKey {
         case version, shapes, connectors, id, name, layers, activeLayerID
-        case unit, scale, precision, defaultRouting, guides, pageSetup
+        case unit, scale, precision, defaultRouting, guides, pageSetup, grid
     }
 
     func shape(_ id: UUID) -> Shape? { shapes.first { $0.id == id } }
@@ -242,6 +244,7 @@ extension Diagram {
         defaultRouting = try c.decodeIfPresent(ConnectorRouting.self, forKey: .defaultRouting) ?? .orthogonal
         guides = try c.decodeIfPresent([GuideLine].self, forKey: .guides) ?? []
         pageSetup = try c.decodeIfPresent(PageSetup.self, forKey: .pageSetup) ?? PageSetup()
+        grid = try c.decodeIfPresent(GridSettings.self, forKey: .grid) ?? GridSettings()
     }
 }
 

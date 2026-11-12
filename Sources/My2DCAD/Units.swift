@@ -79,6 +79,21 @@ extension Diagram {
         return String(format: "%.\(d)f", value).replacingOccurrences(of: ".", with: ",")
     }
 
+    /// Nombre à la française sans zéros inutiles : « 5 », « 0,25 », « 2,5 ».
+    static func formatCompact(_ value: Double, maxDecimals: Int = 4) -> String {
+        var s = format(value, decimals: maxDecimals)
+        if s.contains(",") {
+            while s.hasSuffix("0") { s.removeLast() }
+            if s.hasSuffix(",") { s.removeLast() }
+        }
+        return s == "-0" ? "0" : s
+    }
+
+    /// Espacement de la grille affichée, dans l'unité de la page : « 5 mm ».
+    func gridSpacingText(zoom: CGFloat) -> String {
+        Diagram.formatCompact(measure(gridStep(zoom: zoom))) + " " + unit.symbol
+    }
+
     /// Texte d'une cote : « 123,4 mm ».
     func formatLength(_ worldLength: CGFloat) -> String {
         Diagram.format(measure(worldLength), decimals: precision) + " " + unit.symbol

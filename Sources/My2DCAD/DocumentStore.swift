@@ -132,7 +132,9 @@ final class DocumentStore: ObservableObject {
     @Published var showRulers = true
     /// Repère en cours de création depuis une règle (aperçu, pas encore dans le document).
     @Published var rulerGuidePreview: GuideLine?
-    let gridSize: CGFloat = 20
+    /// Espacement de la grille affichée (unités du dessin) : sert au magnétisme, au décalage
+    /// des copies et au déplacement au clavier.
+    var gridSize: CGFloat { doc.gridStep(zoom: zoom) }
 
     // Fichier
     @Published var fileURL: URL?

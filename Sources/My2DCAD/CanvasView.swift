@@ -617,9 +617,13 @@ struct CanvasView: View {
     }
 
     private func drawGrid(_ ctx: inout GraphicsContext, size: CGSize) {
+        let settings = store.doc.grid
+        guard settings.visible else { return }
+        let subdivisions = max(settings.subdivisions, 1)
         var step = store.gridSize * store.zoom
         var factor: CGFloat = 1
-        while step < 8 { step *= 5; factor *= 5 }
+        // Grille fixe trop serrée à ce zoom : on n'affiche qu'une ligne sur N (le magnétisme garde le pas).
+        while step < 4 { step *= CGFloat(max(subdivisions, 2)); factor *= CGFloat(max(subdivisions, 2)) }
         let world = store.gridSize * factor
         let topLeft = store.toWorld(.zero)
         let bottomRight = store.toWorld(CGPoint(x: size.width, y: size.height))
@@ -631,7 +635,7 @@ struct CanvasView: View {
         var index = Int((topLeft.x / world).rounded(.down))
         while gx <= bottomRight.x {
             let x = store.toScreen(CGPoint(x: gx, y: 0)).x
-            if index % 5 == 0 { major.move(to: CGPoint(x: x, y: 0)); major.addLine(to: CGPoint(x: x, y: size.height)) }
+            if index % subdivisions == 0 { major.move(to: CGPoint(x: x, y: 0)); major.addLine(to: CGPoint(x: x, y: size.height)) }
             else { minor.move(to: CGPoint(x: x, y: 0)); minor.addLine(to: CGPoint(x: x, y: size.height)) }
             gx += world; index += 1
         }
@@ -639,7 +643,7 @@ struct CanvasView: View {
         index = Int((topLeft.y / world).rounded(.down))
         while gy <= bottomRight.y {
             let y = store.toScreen(CGPoint(x: 0, y: gy)).y
-            if index % 5 == 0 { major.move(to: CGPoint(x: 0, y: y)); major.addLine(to: CGPoint(x: size.width, y: y)) }
+            if index % subdivisions == 0 { major.move(to: CGPoint(x: 0, y: y)); major.addLine(to: CGPoint(x: size.width, y: y)) }
             else { minor.move(to: CGPoint(x: 0, y: y)); minor.addLine(to: CGPoint(x: size.width, y: y)) }
             gy += world; index += 1
         }

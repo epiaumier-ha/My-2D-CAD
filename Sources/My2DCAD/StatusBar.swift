@@ -16,7 +16,9 @@ struct StatusBar: View {
             Text(hint).lineLimit(1).truncationMode(.tail)
             Spacer(minLength: 8)
             if store.snapEnabled {
-                Label("Grille \(Int(store.gridSize))", systemImage: "squareshape.split.2x2.dotted")
+                Label("Grille " + store.doc.gridSpacingText(zoom: store.zoom),
+                      systemImage: "squareshape.split.2x2.dotted")
+                    .help("Magnétisme activé : les formes s'alignent sur la grille")
             }
             // Zoom à droite, comme dans Visio : réduire, curseur, agrandir, pourcentage, ajuster.
             Button { store.zoom(by: 0.8) } label: { Image(systemName: "minus") }

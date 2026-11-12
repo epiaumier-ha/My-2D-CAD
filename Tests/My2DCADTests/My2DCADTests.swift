@@ -1599,3 +1599,56 @@ final class SheetTests: XCTestCase {
         XCTAssertEqual(tools.pageState()["sheet"]?["paper"]?.string, "custom")
     }
 }
+
+@MainActor
+final class GridTests: XCTestCase {
+    func testVariableGridUsesRoundValuesOfThePageUnit() {
+        var d = Diagram()   // mm, échelle 1:1, grille variable normale (12 pt à l'écran au moins)
+        XCTAssertEqual(d.measure(d.gridStep(zoom: 1)), 5, accuracy: 1e-9, "12 pt ≈ 4,2 mm → 5 mm")
+        XCTAssertEqual(d.measure(d.gridStep(zoom: 4)), 2, accuracy: 1e-9, "zoom 400 % → 2 mm")
+        XCTAssertEqual(d.measure(d.gridStep(zoom: 0.1)), 50, accuracy: 1e-9)
+        d.grid.density = .coarse
+        XCTAssertEqual(d.measure(d.gridStep(zoom: 1)), 10, accuracy: 1e-9)
+        d.unit = .m
+        d.scale = 100
+        XCTAssertEqual(d.measure(d.gridStep(zoom: 1)), 1, accuracy: 1e-9, "1:100 en mètres : 1 m")
+        XCTAssertEqual(d.gridSpacingText(zoom: 1), "1 m")
+    }
+
+    func testFixedGridDrivesSnapAndIsSaved() throws {
+        let store = DocumentStore()
+        store.updatePageSettings { $0.grid.mode = .fixed; $0.grid.fixedSpacing = 25; $0.grid.subdivisions = 4 }
+        XCTAssertEqual(store.gridSize, 25)
+        store.zoom = 3
+        XCTAssertEqual(store.gridSize, 25, "grille fixe : indépendante du zoom")
+        XCTAssertEqual(store.snap(CGPoint(x: 37, y: 63)), CGPoint(x: 25, y: 75))
+        store.snapEnabled = false
+        XCTAssertEqual(store.snap(CGPoint(x: 37, y: 63)), CGPoint(x: 37, y: 63))
+
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("grid-\(UUID().uuidString).cad2d")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try DiagramIO.save(store.doc, to: url)
+        XCTAssertEqual(try DiagramIO.load(from: url).pages[0].grid, store.doc.grid)
+        var bad = store.doc
+        bad.grid.subdivisions = 0
+        XCTAssertThrowsError(try DiagramIO.validate(bad))
+        bad.grid.subdivisions = 5
+        bad.grid.fixedSpacing = -1
+        XCTAssertThrowsError(try DiagramIO.validate(bad))
+        store.undo()
+        XCTAssertEqual(store.doc.grid, GridSettings(), "réglage de grille annulable")
+    }
+
+    func testAssistantCanSetTheGrid() {
+        let store = DocumentStore()
+        let tools = AssistantToolbox(store: store)
+        let out = tools.run("set_page", ["grid_spacing": 20, "grid_visible": false])
+        XCTAssertFalse(out.isError, out.result)
+        XCTAssertEqual(store.doc.grid.mode, .fixed)
+        XCTAssertFalse(store.doc.grid.visible)
+        XCTAssertEqual(store.doc.measure(store.gridSize), 20, accuracy: 1e-9)
+        XCTAssertEqual(tools.pageState()["grid"]?["mode"]?.string, "fixed")
+        XCTAssertEqual(Diagram.formatCompact(2.50), "2,5")
+        XCTAssertEqual(Diagram.formatCompact(5), "5")
+    }
+}

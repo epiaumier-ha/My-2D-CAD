@@ -142,6 +142,21 @@ struct My2DCADApp: App {
                 Toggle("Assistant IA", isOn: $showAssistant).keyboardShortcut("i", modifiers: [.command, .option])
                 Divider()
                 Toggle("Règles", isOn: $store.showRulers).keyboardShortcut("r", modifiers: [.command, .option])
+                Toggle("Grille", isOn: Binding(
+                    get: { store.doc.grid.visible },
+                    set: { v in store.updatePageSettings { $0.grid.visible = v } }))
+                    .keyboardShortcut("g", modifiers: [.command, .option])
+                Menu("Espacement de la grille") {
+                    ForEach(GridDensity.allCases) { density in
+                        Button("Variable – \(density.label.lowercased())") {
+                            store.updatePageSettings { $0.grid.mode = .variable; $0.grid.density = density }
+                        }
+                    }
+                    Divider()
+                    Button("Fixe (réglage dans l'onglet Affichage)") {
+                        store.updatePageSettings { $0.grid.mode = .fixed }
+                    }
+                }
                 Toggle("Magnétisme de la grille", isOn: $store.snapEnabled)
                 Toggle("Repères d'alignement dynamiques", isOn: $store.guidesEnabled)
                 Button("Supprimer tous les repères") { store.removeAllGuides() }

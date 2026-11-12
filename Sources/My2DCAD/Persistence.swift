@@ -88,6 +88,7 @@ enum DiagramIO {
         guard d.name.count <= maxNameLength else { throw DiagramIOError.invalid("nom de page trop long") }
         guard d.layers.count <= maxLayers else { throw DiagramIOError.invalid("trop de calques") }
         guard d.pageSetup.isValid else { throw DiagramIOError.invalid("taille de feuille invalide") }
+        guard d.grid.isValid else { throw DiagramIOError.invalid("réglages de grille invalides") }
         guard d.scale.isFinite, Diagram.scaleRange.contains(d.scale), (0...4).contains(d.precision) else {
             throw DiagramIOError.invalid("réglages de page invalides")
         }

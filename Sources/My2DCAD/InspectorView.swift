@@ -164,6 +164,9 @@ struct InspectorView: View {
         pane("Feuille") {
             SheetControls()
         }
+        pane("Grille") {
+            GridControls()
+        }
         pane("Page « \(d.name) »") {
             Picker("Unité", selection: Binding(
                 get: { d.unit },
