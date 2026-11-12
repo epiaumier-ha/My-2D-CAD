@@ -391,7 +391,9 @@ final class DocumentStore: ObservableObject {
     /// Termine l'édition d'un champ de texte (recherche, inspecteur) et rend le clavier au dessin.
     /// La valeur en cours de saisie est validée avant de perdre le focus.
     func endTextEditing() {
-        guard let window = NSApp.keyWindow, window.firstResponder is NSText else { return }
+        // NSApp est absent quand le code tourne hors de l'application (tests).
+        guard let app = NSApp as NSApplication?, let window = app.keyWindow,
+              window.firstResponder is NSText else { return }
         window.makeFirstResponder(nil)
     }
 
