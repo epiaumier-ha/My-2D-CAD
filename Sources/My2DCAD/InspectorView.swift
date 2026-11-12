@@ -60,6 +60,7 @@ struct InspectorView: View {
                     }), axis: .vertical)
                     .lineLimit(1...4)
             }
+            if !store.doc.layers.isEmpty { layerSection }
             Section("Position et taille") {
                 field("X", value: s.rect.origin.x) { $0.rect.origin.x = $1 }
                 field("Y", value: s.rect.origin.y) { $0.rect.origin.y = $1 }
@@ -100,6 +101,21 @@ struct InspectorView: View {
         } else {
             Section("Sélection") {
                 Text(selectionSummary)
+            }
+            if !store.selectedShapes.isEmpty && !store.doc.layers.isEmpty { layerSection }
+        }
+    }
+
+    /// Calque des formes sélectionnées.
+    private var layerSection: some View {
+        Section("Calque") {
+            Picker("Calque", selection: Binding<UUID?>(
+                get: { store.selectionLayerID ?? nil },
+                set: { store.assignSelection(toLayer: $0) })) {
+                Text("Sans calque").tag(UUID?.none)
+                ForEach(store.doc.layers) { l in
+                    Text(l.name).tag(UUID?.some(l.id))
+                }
             }
         }
     }
@@ -302,6 +318,15 @@ struct InspectorView: View {
                     iconButton("rotate.left", help: "Faire pivoter de 90° à gauche (⌃L)") { store.rotateSelection(by: -90) }
                     iconButton("rotate.right", help: "Faire pivoter de 90° à droite (⌃R)") { store.rotateSelection(by: 90) }
                 }
+            }
+            Section("Groupe") {
+                HStack {
+                    Button("Grouper") { store.groupSelection() }.disabled(!store.canGroup)
+                    Button("Dissocier") { store.ungroupSelection() }.disabled(!store.canUngroup)
+                }
+                Text("⌘G grouper, ⇧⌘G dissocier. Un clic sur une forme groupée sélectionne tout le groupe.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section("Ordre") {
                 HStack(spacing: 2) {

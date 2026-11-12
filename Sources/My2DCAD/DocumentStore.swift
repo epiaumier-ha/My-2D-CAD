@@ -85,8 +85,16 @@ private struct EventBox: @unchecked Sendable {
 final class DocumentStore: ObservableObject {
     static let shared = DocumentStore()
 
-    // Document et sélection
-    @Published var doc = Diagram()
+    // Document (pages) et sélection
+    @Published var document = CADDocument()
+    /// Index de la page affichée.
+    @Published private(set) var currentPage = 0
+
+    /// Page affichée : toutes les opérations d'édition portent sur elle.
+    var doc: Diagram {
+        get { document.pages[currentPage] }
+        set { document.pages[currentPage] = newValue }
+    }
     @Published var selection: Set<UUID> = []
     @Published var tool: Tool = .select {
         didSet { if tool.isDrawingTool { lastDrawingTool = tool } }
@@ -102,17 +110,25 @@ final class DocumentStore: ObservableObject {
     @Published var zoom: CGFloat = 1
     @Published var offset = CGSize(width: 40, height: 40)
     @Published var snapEnabled = true
+    /// Repères d'alignement dynamiques pendant le déplacement et le dessin.
+    @Published var guidesEnabled = true
     let gridSize: CGFloat = 20
 
     // Fichier
     @Published var fileURL: URL?
     @Published var isDirty = false
 
-    // Historique (instantanés complets : simple et fiable pour un prototype)
-    @Published private(set) var undoStack: [Diagram] = []
-    @Published private(set) var redoStack: [Diagram] = []
+    /// État enregistré dans l'historique : tout le document (pages comprises) et la page affichée.
+    struct HistoryEntry: Equatable {
+        var document: CADDocument
+        var page: Int
+    }
+
+    // Historique (instantanés complets ; les pages non modifiées partagent leur mémoire)
+    @Published private(set) var undoStack: [HistoryEntry] = []
+    @Published private(set) var redoStack: [HistoryEntry] = []
     private let maxUndo = 100
-    private var transactionStart: Diagram?
+    private var transactionStart: HistoryEntry?
     private var coalesceKey: String?
 
     // État non publié
@@ -164,7 +180,9 @@ final class DocumentStore: ObservableObject {
 
     // MARK: Historique
 
-    private func push(_ snapshot: Diagram) {
+    private func snapshot() -> HistoryEntry { HistoryEntry(document: document, page: currentPage) }
+
+    private func push(_ snapshot: HistoryEntry) {
         undoStack.append(snapshot)
         if undoStack.count > maxUndo { undoStack.removeFirst(undoStack.count - maxUndo) }
         redoStack.removeAll()
@@ -174,42 +192,71 @@ final class DocumentStore: ObservableObject {
 
     /// Modification atomique avec entrée d'historique.
     func perform(_ change: (inout Diagram) -> Void) {
-        let before = doc
+        let before = snapshot()
         change(&doc)
-        if before != doc { push(before) }
+        if before.document != document { push(before) }
+    }
+
+    /// Modification du document entier (pages), avec entrée d'historique.
+    func performDocument(_ change: (inout CADDocument) -> Void) {
+        let before = snapshot()
+        var updated = document
+        change(&updated)
+        guard updated != document, !updated.pages.isEmpty else { return }
+        push(before)
+        document = updated
+        currentPage = min(currentPage, document.pages.count - 1)
     }
 
     /// Pour les gestes continus (déplacer, redimensionner, dessiner) : une seule entrée d'historique.
-    func beginTransaction() { transactionStart = doc }
+    func beginTransaction() { transactionStart = snapshot() }
 
     func commitTransaction() {
-        if let start = transactionStart, start != doc { push(start) }
+        if let start = transactionStart, start.document != document { push(start) }
         transactionStart = nil
     }
 
     func undo() {
         guard let previous = undoStack.popLast() else { return }
         editingShapeID = nil
-        redoStack.append(doc)
-        doc = previous
-        isDirty = true
-        coalesceKey = nil
-        pruneSelection()
+        redoStack.append(snapshot())
+        restore(previous)
     }
 
     func redo() {
         guard let next = redoStack.popLast() else { return }
         editingShapeID = nil
-        undoStack.append(doc)
-        doc = next
+        undoStack.append(snapshot())
+        restore(next)
+    }
+
+    private func restore(_ entry: HistoryEntry) {
+        document = entry.document
+        currentPage = min(max(entry.page, 0), document.pages.count - 1)
         isDirty = true
         coalesceKey = nil
         pruneSelection()
     }
 
-    private func pruneSelection() {
-        let ids = Set(doc.shapes.map(\.id)).union(doc.connectors.map(\.id))
-        selection = selection.intersection(ids)
+    /// Retire de la sélection ce qui n'existe plus ou n'est plus sélectionnable (calque masqué ou verrouillé).
+    func pruneSelection() {
+        let d = doc
+        let shapes = Set(d.shapes.filter { d.isSelectable($0) }.map(\.id))
+        let connectors = Set(d.connectors.filter { d.isVisible($0) }.map(\.id))
+        selection = selection.intersection(shapes.union(connectors))
+    }
+
+    /// Après une suppression ou un déplacement de page (l'historique est déjà enregistré).
+    func setCurrentPageAfterStructureChange(_ index: Int) {
+        currentPage = min(max(index, 0), document.pages.count - 1)
+    }
+
+    /// Affiche une autre page (pas d'entrée d'historique).
+    func selectPage(_ index: Int) {
+        guard document.pages.indices.contains(index), index != currentPage else { return }
+        if editingShapeID != nil { commitTextEditing() }
+        selection = []
+        currentPage = index
     }
 
     // MARK: Édition
@@ -217,7 +264,8 @@ final class DocumentStore: ObservableObject {
     /// Ajout direct (à utiliser à l'intérieur d'une transaction).
     func insertShape(kind: ShapeKind, rect: CGRect) {
         guard doc.shapes.count < DiagramIO.maxShapes else { return }
-        let s = Shape(kind: kind, rect: rect)
+        var s = Shape(kind: kind, rect: rect)
+        s.layerID = doc.activeLayerID
         doc.shapes.append(s)
         selection = [s.id]
     }
@@ -235,8 +283,11 @@ final class DocumentStore: ObservableObject {
         insertFragment(fragment, offset: gridSize)
     }
 
+    /// Tout sélectionner, sauf les formes des calques masqués ou verrouillés.
     func selectAll() {
-        selection = Set(doc.shapes.map(\.id)).union(doc.connectors.map(\.id))
+        let d = doc
+        selection = Set(d.shapes.filter { d.isSelectable($0) }.map(\.id))
+            .union(d.connectors.filter { d.isVisible($0) }.map(\.id))
     }
 
     func nudgeSelection(dx: CGFloat, dy: CGFloat) {
@@ -259,7 +310,7 @@ final class DocumentStore: ObservableObject {
         guard s != doc.shapes[i] else { return }
         let k = "\(key)-\(id)"
         if coalesceKey != k {
-            push(doc)
+            push(snapshot())
             coalesceKey = k
         }
         doc.shapes[i] = s
@@ -283,7 +334,7 @@ final class DocumentStore: ObservableObject {
         guard updated != doc else { return }
         let k = "\(key)-" + ids.map(\.uuidString).sorted().joined(separator: ",")
         if coalesceKey != k {
-            push(doc)
+            push(snapshot())
             coalesceKey = k
         }
         doc = updated
@@ -314,7 +365,9 @@ final class DocumentStore: ObservableObject {
     /// `includePaths: false` les ignore (ils n'ont pas de points de connexion).
     func hitShape(at world: CGPoint, includePaths: Bool = true) -> Shape? {
         let tolerance = 6 / zoom
-        return doc.shapes.last { s in
+        let d = doc
+        return d.shapes.last { s in
+            guard d.isSelectable(s) else { return false }
             if s.kind.isPath { return includePaths && s.distanceToPath(world) <= tolerance }
             return s.contains(world)
         }
@@ -322,8 +375,9 @@ final class DocumentStore: ObservableObject {
 
     func hitConnector(at world: CGPoint) -> Connector? {
         let tolerance = 6 / zoom
-        return doc.connectors.last { c in
-            guard let pts = doc.connectorPoints(c), pts.count > 1 else { return false }
+        let d = doc
+        return d.connectors.last { c in
+            guard d.isVisible(c), let pts = d.connectorPoints(c), pts.count > 1 else { return false }
             for i in 0..<(pts.count - 1)
             where distanceFromPoint(world, toSegment: pts[i], pts[i + 1]) <= tolerance {
                 return true
@@ -356,8 +410,9 @@ final class DocumentStore: ObservableObject {
     }
 
     func fitToContent() {
-        guard let first = doc.shapes.first else { resetView(); return }
-        let bounds = doc.shapes.dropFirst().reduce(first.bounds) { $0.union($1.bounds) }
+        let visible = doc.shapes.filter { doc.isVisible($0) }
+        guard let first = visible.first else { resetView(); return }
+        let bounds = visible.dropFirst().reduce(first.bounds) { $0.union($1.bounds) }
         let pad: CGFloat = 40
         let availW = max(canvasSize.width - 2 * pad, 50)
         let availH = max(canvasSize.height - 2 * pad, 50)
@@ -371,7 +426,7 @@ final class DocumentStore: ObservableObject {
 
     func newDocument() {
         guard confirmDiscard() else { return }
-        reset(with: Diagram(), url: nil)
+        reset(with: CADDocument(), url: nil)
     }
 
     func open() {
@@ -407,7 +462,7 @@ final class DocumentStore: ObservableObject {
     @discardableResult
     private func write(to url: URL) -> Bool {
         do {
-            try DiagramIO.save(doc, to: url)
+            try DiagramIO.save(document, to: url)
             fileURL = url
             isDirty = false
             return true
@@ -417,9 +472,10 @@ final class DocumentStore: ObservableObject {
         }
     }
 
-    private func reset(with diagram: Diagram, url: URL?) {
+    private func reset(with newDocument: CADDocument, url: URL?) {
         editingShapeID = nil
-        doc = diagram
+        currentPage = 0
+        document = newDocument
         selection = []
         undoStack = []
         redoStack = []
@@ -451,7 +507,7 @@ final class DocumentStore: ObservableObject {
         }
     }
 
-    private func showError(_ message: String, _ error: Error) {
+    func showError(_ message: String, _ error: Error) {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = message

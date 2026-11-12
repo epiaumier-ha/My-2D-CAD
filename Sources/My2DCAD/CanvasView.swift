@@ -26,7 +26,7 @@ private enum Handle: CaseIterable {
 }
 
 private enum Interaction {
-    case moving(origins: [UUID: CGPoint], start: CGPoint, primary: UUID)
+    case moving(origins: [UUID: CGPoint], start: CGPoint, primary: UUID, bounds: CGRect)
     case resizing(original: Shape, handle: Handle)
     case editingPoint(id: UUID, index: Int)
     case reconnecting(id: UUID, start: Bool, current: CGPoint)
@@ -52,6 +52,15 @@ struct CanvasView: View {
     /// Dernier clic sur une forme, pour détecter le double-clic.
     @State private var lastClick: (id: UUID, time: TimeInterval)?
     @FocusState private var editorFocused: Bool
+    /// Repères d'alignement affichés pendant le geste en cours.
+    @State private var guides: [AlignmentGuide] = []
+    /// Rectangles des autres formes, cibles des repères (calculés au début du geste).
+    @State private var guideTargets: [CGRect] = []
+
+    /// Moteur de dessin de la page affichée.
+    private var painter: DiagramPainter {
+        DiagramPainter(diagram: store.doc, zoom: store.zoom, offset: store.offset, editingShapeID: store.editingShapeID)
+    }
 
     private let accent = Color.accentColor
 
@@ -63,8 +72,8 @@ struct CanvasView: View {
             } symbols: {
                 // Libellés des formes : vues SwiftUI (police, alignement, retour à la ligne)
                 // dessinées par le canevas dans l'ordre des formes.
-                ForEach(store.doc.shapes) { s in
-                    labelView(s).tag(s.id)
+                ForEach(painter.drawnShapes) { s in
+                    painter.labelView(s).tag(s.id)
                 }
             }
             .gesture(dragGesture)
@@ -180,6 +189,7 @@ struct CanvasView: View {
         store.endTextEditing()
         let w = store.toWorld(screen)
         store.beginTransaction()
+        prepareGuideTargets()
 
         switch store.tool {
         case .pan:
@@ -188,7 +198,7 @@ struct CanvasView: View {
 
         case .rectangle, .ellipse, .diamond, .text, .line, .curve:
             if let kind = store.tool.shapeKind {
-                let p = store.snap(w)
+                let p = snapPoint(w)
                 interaction = .drawing(kind: kind, start: p, current: p)
             }
 
@@ -237,18 +247,27 @@ struct CanvasView: View {
                     return
                 }
                 lastClick = (s.id, now)
+                // Une forme groupée entraîne tout son groupe.
+                let unit = store.expandedToGroups([s.id])
                 if additive {
-                    if store.selection.contains(s.id) { store.selection.remove(s.id) }
-                    else { store.selection.insert(s.id) }
+                    if store.selection.contains(s.id) { store.selection.subtract(unit) }
+                    else { store.selection.formUnion(unit) }
                 } else if !store.selection.contains(s.id) {
-                    store.selection = [s.id]
+                    store.selection = unit
                 }
                 if store.selection.contains(s.id) {
                     var origins: [UUID: CGPoint] = [:]
+                    var bounds: CGRect?
                     for sh in store.doc.shapes where store.selection.contains(sh.id) {
                         origins[sh.id] = sh.rect.origin
+                        bounds = bounds.map { $0.union(sh.bounds) } ?? sh.bounds
                     }
-                    interaction = .moving(origins: origins, start: w, primary: s.id)
+                    // Les formes déplacées ne servent pas de repère.
+                    let moving = Set(origins.keys)
+                    guideTargets = store.doc.shapes
+                        .filter { !moving.contains($0.id) && store.doc.isVisible($0) }
+                        .prefix(3000).map(\.bounds)
+                    interaction = .moving(origins: origins, start: w, primary: s.id, bounds: bounds ?? s.bounds)
                 }
             } else if let c = store.hitConnector(at: w) {
                 if additive { store.selection.insert(c.id) } else { store.selection = [c.id] }
@@ -264,11 +283,20 @@ struct CanvasView: View {
         let w = store.toWorld(v.location)
 
         switch current {
-        case .moving(let origins, let start, let primary):
+        case .moving(let origins, let start, let primary, let bounds):
             guard let po = origins[primary] else { return }
-            let raw = CGPoint(x: po.x + w.x - start.x, y: po.y + w.y - start.y)
-            let snapped = store.snap(raw)
-            let dx = snapped.x - po.x, dy = snapped.y - po.y
+            let rawDx = w.x - start.x, rawDy = w.y - start.y
+            let snapped = store.snap(CGPoint(x: po.x + rawDx, y: po.y + rawDy))
+            var dx = snapped.x - po.x, dy = snapped.y - po.y
+            // Repères dynamiques : l'alignement sur une autre forme l'emporte sur la grille.
+            guides = []
+            if store.guidesEnabled {
+                let a = alignmentSnap(moving: bounds.offsetBy(dx: rawDx, dy: rawDy), targets: guideTargets,
+                                      tolerance: 6 / store.zoom)
+                if let gx = a.dx { dx = rawDx + gx }
+                if let gy = a.dy { dy = rawDy + gy }
+                guides = a.guides
+            }
             for i in store.doc.shapes.indices {
                 if let o = origins[store.doc.shapes[i].id] {
                     store.doc.shapes[i].rect.origin = CGPoint(x: o.x + dx, y: o.y + dy)
@@ -277,7 +305,7 @@ struct CanvasView: View {
 
         case .resizing(let original, let handle):
             // Calcul dans le repère local de la forme, le coin opposé restant fixe.
-            let pointer = original.rotation == 0 ? store.snap(w) : w
+            let pointer = original.rotation == 0 ? snapPoint(w) : w
             let a = handle.anchor(in: original.rect)
             let q = original.toLocal(pointer)
             let width = max(abs(q.x - a.x), minimumShapeSize)
@@ -308,11 +336,11 @@ struct CanvasView: View {
             var pts = store.doc.shapes[i].worldPoints
             guard pts.indices.contains(index) else { return }
             let isControl = store.doc.shapes[i].kind == .curve && index == 1
-            pts[index] = isControl ? w : store.snap(w)
+            pts[index] = isControl ? w : snapPoint(w)
             store.doc.shapes[i].setWorldPoints(pts)
 
         case .drawing(let kind, let start, _):
-            var end = store.snap(w)
+            var end = snapPoint(w)
             if kind == .line && NSEvent.modifierFlags.contains(.shift) {
                 // Maj : trait contraint à un multiple de 45°.
                 let dx = end.x - start.x, dy = end.y - start.y
@@ -340,6 +368,7 @@ struct CanvasView: View {
     private func finish(_ v: DragGesture.Value) {
         defer {
             interaction = nil
+            guides = []
             store.commitTransaction()
         }
         guard let current = interaction else { return }
@@ -385,7 +414,10 @@ struct CanvasView: View {
 
         case .marquee(let start, let end, let additive):
             let rect = rectBetween(start, end)
-            let hit = Set(store.doc.shapes.filter { $0.bounds.intersects(rect) }.map(\.id))
+            let d = store.doc
+            let hit = store.expandedToGroups(Set(d.shapes.filter {
+                d.isSelectable($0) && $0.bounds.intersects(rect)
+            }.map(\.id)))
             store.selection = additive ? store.selection.union(hit) : hit
 
         default:
@@ -399,11 +431,10 @@ struct CanvasView: View {
         ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(nsColor: .textBackgroundColor)))
         drawGrid(&ctx, size: size)
 
-        for c in store.doc.connectors { drawConnector(c, in: &ctx) }
-        for s in store.doc.shapes { drawShape(s, in: &ctx) }
+        painter.drawContent(&ctx)
 
         if store.tool == .connector {
-            for s in store.doc.shapes where !s.kind.isPath {
+            for s in store.doc.shapes where !s.kind.isPath && store.doc.isSelectable(s) {
                 for p in 0..<Port.count {
                     let pt = store.toScreen(s.portPoint(p))
                     ctx.fill(Path(ellipseIn: CGRect(x: pt.x - 4, y: pt.y - 4, width: 8, height: 8)),
@@ -413,7 +444,48 @@ struct CanvasView: View {
         }
 
         drawSelection(&ctx)
+        drawGuides(&ctx)
         drawInteractionPreview(&ctx)
+    }
+
+    // MARK: - Repères d'alignement
+
+    /// Cibles par défaut (dessin, redimensionnement) : toutes les formes visibles sauf la sélection.
+    private func prepareGuideTargets() {
+        let sel = store.selection
+        guideTargets = store.doc.shapes
+            .filter { !sel.contains($0.id) && store.doc.isVisible($0) }
+            .prefix(3000).map(\.bounds)
+        guides = []
+    }
+
+    /// Point aligné : grille, puis repères dynamiques s'ils sont proches (ils l'emportent).
+    private func snapPoint(_ w: CGPoint) -> CGPoint {
+        var p = store.snap(w)
+        guides = []
+        guard store.guidesEnabled else { return p }
+        let a = alignmentSnap(moving: CGRect(origin: w, size: .zero), targets: guideTargets, tolerance: 6 / store.zoom)
+        if let dx = a.dx { p.x = w.x + dx }
+        if let dy = a.dy { p.y = w.y + dy }
+        guides = a.guides
+        return p
+    }
+
+    private func drawGuides(_ ctx: inout GraphicsContext) {
+        guard !guides.isEmpty else { return }
+        let color = Color(red: 0.93, green: 0.2, blue: 0.55)
+        var path = Path()
+        for g in guides {
+            let extra: CGFloat = 12 / store.zoom
+            if g.vertical {
+                path.move(to: store.toScreen(CGPoint(x: g.position, y: g.from - extra)))
+                path.addLine(to: store.toScreen(CGPoint(x: g.position, y: g.to + extra)))
+            } else {
+                path.move(to: store.toScreen(CGPoint(x: g.from - extra, y: g.position)))
+                path.addLine(to: store.toScreen(CGPoint(x: g.to + extra, y: g.position)))
+            }
+        }
+        ctx.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: 1, dash: [4, 2]))
     }
 
     private func drawGrid(_ ctx: inout GraphicsContext, size: CGSize) {
@@ -451,111 +523,6 @@ struct CanvasView: View {
         kind.paths(in: r).outline
     }
 
-    /// Rotation autour du centre du rectangle écran (le zoom est uniforme, l'angle est conservé).
-    private func rotationTransform(_ s: Shape, screenRect r: CGRect) -> CGAffineTransform {
-        guard s.rotation != 0 else { return .identity }
-        return CGAffineTransform(translationX: r.midX, y: r.midY)
-            .rotated(by: s.angle)
-            .translatedBy(x: -r.midX, y: -r.midY)
-    }
-
-    /// Tracé écran d'un trait ou d'une courbe à partir de ses points monde.
-    private func screenPath(kind: ShapeKind, points world: [CGPoint]) -> Path {
-        let p = world.map { store.toScreen($0) }
-        var path = Path()
-        if kind == .curve, p.count == 3 {
-            path.move(to: p[0])
-            path.addQuadCurve(to: p[2], control: p[1])
-        } else if p.count >= 2 {
-            path.move(to: p[0])
-            for q in p.dropFirst() { path.addLine(to: q) }
-        }
-        return path
-    }
-
-    private func drawPathShape(_ s: Shape, in ctx: inout GraphicsContext) {
-        let world = s.worldPoints
-        if s.line.dash != .none {
-            ctx.stroke(screenPath(kind: s.kind, points: world), with: .color(s.line.displayColor),
-                       style: s.line.strokeStyle(zoom: store.zoom))
-        }
-        // Flèches : direction donnée par la tangente à chaque extrémité.
-        let pts = world.map { store.toScreen($0) }
-        if pts.count >= 2 {
-            let beforeEnd = pts.count == 3 ? pts[1] : pts[pts.count - 2]
-            let afterStart = pts[1]
-            drawArrow(s.line.beginArrow, tip: pts[0],
-                      from: afterStart.distance(to: pts[0]) > 0.5 ? afterStart : pts[pts.count - 1],
-                      style: s.line, in: &ctx)
-            drawArrow(s.line.endArrow, tip: pts[pts.count - 1],
-                      from: beforeEnd.distance(to: pts[pts.count - 1]) > 0.5 ? beforeEnd : pts[0],
-                      style: s.line, in: &ctx)
-        }
-        guard !s.text.isEmpty, store.editingShapeID != s.id,
-              let label = ctx.resolveSymbol(id: s.id) else { return }
-        ctx.draw(label, at: store.toScreen(s.pathMidpoint), anchor: .center)
-    }
-
-    private func drawShape(_ s: Shape, in ctx: inout GraphicsContext) {
-        if s.kind.isPath { drawPathShape(s, in: &ctx); return }
-        let r = store.toScreen(s.rect)
-        if s.kind != .text {
-            let t = rotationTransform(s, screenRect: r)
-            let parts = s.kind.paths(in: r)
-            let lineColor = s.line.displayColor
-            let style = s.line.strokeStyle(zoom: store.zoom)
-            let showLine = s.line.dash != .none
-            if !parts.fill.isEmpty {
-                let body = parts.fill.applying(t)
-                if let fill = s.fillColor { ctx.fill(body, with: .color(fill)) }
-                if showLine { ctx.stroke(body, with: .color(lineColor), style: style) }
-            }
-            if !parts.stroke.isEmpty && showLine {
-                ctx.stroke(parts.stroke.applying(t), with: .color(lineColor), style: style)
-            }
-        }
-        guard store.editingShapeID != s.id, let label = ctx.resolveSymbol(id: s.id) else { return }
-        var textContext = ctx
-        textContext.translateBy(x: r.midX, y: r.midY)
-        if s.rotation != 0 { textContext.rotate(by: .radians(Double(s.angle))) }
-        if s.kind.labelPlacement == .below {
-            textContext.draw(label, at: CGPoint(x: 0, y: r.height / 2 + 4), anchor: .top)
-        } else {
-            textContext.draw(label, at: .zero, anchor: .center)
-        }
-    }
-
-    // MARK: - Libellés
-
-    /// Vue du libellé d'une forme : retour à la ligne dans la largeur de la forme
-    /// (ou sur deux largeurs sous une icône), police et alignement du style de texte.
-    @ViewBuilder
-    private func labelView(_ s: Shape) -> some View {
-        let placeholder = s.text.isEmpty && s.kind == .text
-        let content = placeholder ? "Texte" : s.text
-        let ts = s.textStyle
-        let r = store.toScreen(s.rect)
-        let text = Text(content)
-            .italic(ts.italic)
-            .font(ts.font(zoom: store.zoom))
-            .foregroundColor(placeholder ? .gray : ts.color.color)
-        if content.isEmpty {
-            EmptyView()
-        } else if s.kind.isPath {
-            text
-                .multilineTextAlignment(ts.alignment.textAlignment)
-                .padding(.horizontal, 3)
-                .background(Color(nsColor: .textBackgroundColor))
-        } else {
-            let below = s.kind.labelPlacement == .below
-            let width = below ? max(r.width * 2, 120 * store.zoom) : max(r.width - 8 * store.zoom, 20)
-            text
-                .multilineTextAlignment(ts.alignment.textAlignment)
-                .frame(width: width, alignment: ts.alignment.frameAlignment)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
     // MARK: - Menu contextuel et curseurs
 
     @ViewBuilder
@@ -589,79 +556,30 @@ struct CanvasView: View {
         }
     }
 
-    private func drawConnector(_ c: Connector, in ctx: inout GraphicsContext) {
-        guard let world = store.doc.connectorPoints(c), world.count > 1 else { return }
-        let pts = world.map { store.toScreen($0) }
-        var path = Path()
-        path.move(to: pts[0])
-        for p in pts.dropFirst() { path.addLine(to: p) }
-        if store.selection.contains(c.id) {
+    private func drawSelection(_ ctx: inout GraphicsContext) {
+        // Connecteurs sélectionnés : surlignage.
+        for c in store.doc.connectors where store.selection.contains(c.id) {
+            guard let pts = store.doc.connectorPoints(c), pts.count > 1 else { continue }
+            var path = Path()
+            path.move(to: store.toScreen(pts[0]))
+            for p in pts.dropFirst() { path.addLine(to: store.toScreen(p)) }
             ctx.stroke(path, with: .color(accent.opacity(0.35)),
                        style: StrokeStyle(lineWidth: max(CGFloat(c.line.width) * store.zoom, 1) + 6, lineCap: .round))
         }
-        if c.line.dash != .none {
-            ctx.stroke(path, with: .color(c.line.displayColor), style: c.line.strokeStyle(zoom: store.zoom))
+        // Groupes sélectionnés : cadre en pointillés autour de l'ensemble.
+        for b in store.selectedGroupBounds {
+            let r = store.toScreen(b).insetBy(dx: -7, dy: -7)
+            ctx.stroke(Path(roundedRect: r, cornerRadius: 4), with: .color(accent),
+                       style: StrokeStyle(lineWidth: 1, dash: [5, 3]))
         }
-        // Flèches orientées selon le premier / dernier segment non nul.
-        let start = pts[0], tip = pts[pts.count - 1]
-        if let next = pts.dropFirst().first(where: { $0.distance(to: start) > 0.5 }) {
-            drawArrow(c.line.beginArrow, tip: start, from: next, style: c.line, in: &ctx)
-        }
-        if let prev = pts.dropLast().last(where: { $0.distance(to: tip) > 0.5 }) {
-            drawArrow(c.line.endArrow, tip: tip, from: prev, style: c.line, in: &ctx)
-        }
-    }
-
-    /// Pointe de flèche à l'extrémité `tip`, orientée depuis `from` (coordonnées écran).
-    private func drawArrow(_ type: ArrowHead, tip: CGPoint, from: CGPoint, style l: LineStyle,
-                           in ctx: inout GraphicsContext) {
-        guard type != .none else { return }
-        let len = tip.distance(to: from)
-        guard len > 0.01 else { return }
-        let ux = (tip.x - from.x) / len, uy = (tip.y - from.y) / len
-        let size = l.arrowLength(zoom: store.zoom)
-        let half = size * 0.45
-        func at(_ back: CGFloat, _ side: CGFloat) -> CGPoint {
-            CGPoint(x: tip.x - ux * back - uy * side, y: tip.y - uy * back + ux * side)
-        }
-        let shading = GraphicsContext.Shading.color(l.displayColor)
-        switch type {
-        case .none:
-            break
-        case .filled:
-            var p = Path()
-            p.addLines([tip, at(size, half), at(size, -half)])
-            p.closeSubpath()
-            ctx.fill(p, with: shading)
-        case .open:
-            var p = Path()
-            p.move(to: at(size, half))
-            p.addLine(to: tip)
-            p.addLine(to: at(size, -half))
-            ctx.stroke(p, with: shading,
-                       style: StrokeStyle(lineWidth: max(CGFloat(l.width) * store.zoom, 0.75),
-                                          lineCap: .round, lineJoin: .round))
-        case .circle:
-            let r = size * 0.32
-            let c = at(r, 0)
-            ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)), with: shading)
-        case .diamond:
-            var p = Path()
-            p.addLines([tip, at(size / 2, half * 0.8), at(size, 0), at(size / 2, -half * 0.8)])
-            p.closeSubpath()
-            ctx.fill(p, with: shading)
-        }
-    }
-
-    private func drawSelection(_ ctx: inout GraphicsContext) {
         for s in store.selectedShapes {
             if s.kind.isPath {
-                ctx.stroke(screenPath(kind: s.kind, points: s.worldPoints),
+                ctx.stroke(painter.screenPath(kind: s.kind, points: s.worldPoints),
                            with: .color(accent.opacity(0.35)), style: StrokeStyle(lineWidth: 7, lineCap: .round))
                 continue
             }
             let r = store.toScreen(s.rect)
-            let outline = Path(r.insetBy(dx: -3, dy: -3)).applying(rotationTransform(s, screenRect: r))
+            let outline = Path(r.insetBy(dx: -3, dy: -3)).applying(painter.rotationTransform(s, screenRect: r))
             ctx.stroke(outline, with: .color(accent), lineWidth: 1.5)
         }
         if store.selection.count == 1, let id = store.selection.first,
@@ -723,7 +641,7 @@ struct CanvasView: View {
         switch interaction {
         case .drawing(let kind, let start, let end) where kind.isPath:
             let pts = DocumentStore.initialPathPoints(kind: kind, from: start, to: end)
-            ctx.stroke(screenPath(kind: kind, points: pts), with: .color(accent), style: dashed)
+            ctx.stroke(painter.screenPath(kind: kind, points: pts), with: .color(accent), style: dashed)
 
         case .drawing(let kind, let start, let end):
             let r = store.toScreen(rectBetween(start, end))
@@ -737,7 +655,7 @@ struct CanvasView: View {
             ctx.stroke(p, with: .color(accent), style: dashed)
             if let target = store.hitShape(at: end, includePaths: false), target.id != from {
                 let r = store.toScreen(target.rect)
-                let outline = Path(r.insetBy(dx: -3, dy: -3)).applying(rotationTransform(target, screenRect: r))
+                let outline = Path(r.insetBy(dx: -3, dy: -3)).applying(painter.rotationTransform(target, screenRect: r))
                 ctx.stroke(outline, with: .color(.green), lineWidth: 2)
             }
 
@@ -750,7 +668,7 @@ struct CanvasView: View {
             ctx.stroke(p, with: .color(accent), style: dashed)
             if let target = store.hitShape(at: end, includePaths: false) {
                 let r = store.toScreen(target.rect)
-                let outline = Path(r.insetBy(dx: -3, dy: -3)).applying(rotationTransform(target, screenRect: r))
+                let outline = Path(r.insetBy(dx: -3, dy: -3)).applying(painter.rotationTransform(target, screenRect: r))
                 ctx.stroke(outline, with: .color(.green), lineWidth: 2)
             }
 

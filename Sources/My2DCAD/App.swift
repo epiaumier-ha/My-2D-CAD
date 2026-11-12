@@ -31,6 +31,8 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 CanvasView()
                 Divider()
+                PageBar()
+                Divider()
                 StatusBar(pointer: store.pointer)
             }
             Divider()
@@ -156,6 +158,13 @@ struct My2DCADApp: App {
                 Divider()
                 Button("Enregistrer") { store.save() }.keyboardShortcut("s")
                 Button("Enregistrer sous…") { store.saveAs() }.keyboardShortcut("s", modifiers: [.command, .shift])
+                Divider()
+                Button("Exporter en PDF…") { store.exportPDF() }.keyboardShortcut("e", modifiers: [.command, .option])
+                Button("Exporter la page en PNG…") { store.exportPNG() }
+                    .keyboardShortcut("e", modifiers: [.command, .option, .shift])
+            }
+            CommandGroup(replacing: .printItem) {
+                Button("Imprimer…") { store.printDocument() }.keyboardShortcut("p")
             }
             CommandGroup(replacing: .undoRedo) {
                 Button("Annuler") { store.undo() }.keyboardShortcut("z").disabled(!store.canUndo)
@@ -203,6 +212,11 @@ struct My2DCADApp: App {
                     .keyboardShortcut("l", modifiers: .control)
                     .disabled(store.selectedShapes.isEmpty)
                 Divider()
+                Button("Grouper") { store.groupSelection() }
+                    .keyboardShortcut("g").disabled(!store.canGroup)
+                Button("Dissocier") { store.ungroupSelection() }
+                    .keyboardShortcut("g", modifiers: [.command, .shift]).disabled(!store.canUngroup)
+                Divider()
                 Button(StackingOrder.front.label) { store.reorderSelection(.front) }
                     .keyboardShortcut("]", modifiers: [.command, .shift])
                 Button(StackingOrder.forward.label) { store.reorderSelection(.forward) }
@@ -226,6 +240,22 @@ struct My2DCADApp: App {
                 Button("Zoom 100 %") { store.resetView() }.keyboardShortcut("0")
                 Button("Ajuster à la fenêtre") { store.fitToContent() }.keyboardShortcut("9")
                 Toggle("Magnétisme de la grille", isOn: $store.snapEnabled)
+                Toggle("Repères d'alignement dynamiques", isOn: $store.guidesEnabled)
+            }
+            CommandMenu("Page") {
+                Button("Nouvelle page") { store.addPage() }.keyboardShortcut("n", modifiers: [.command, .option])
+                Button("Dupliquer la page") { store.duplicatePage(store.currentPage) }
+                Button("Supprimer la page") { store.deletePage(store.currentPage) }
+                    .disabled(store.pageCount == 1)
+                Divider()
+                Button("Page précédente") { store.selectPreviousPage() }
+                    .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+                    .disabled(store.currentPage == 0)
+                Button("Page suivante") { store.selectNextPage() }
+                    .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+                    .disabled(store.currentPage == store.pageCount - 1)
+                Divider()
+                Button("Nouveau calque") { store.addLayer() }
             }
         }
     }

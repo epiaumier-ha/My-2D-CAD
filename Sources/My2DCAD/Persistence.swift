@@ -21,21 +21,58 @@ enum DiagramIO {
     static let maxConnectors = 100_000
     static let maxCoordinate: CGFloat = 10_000_000
     static let maxTextLength = 10_000
+    static let maxLayers = 64
+    static let maxNameLength = 200
 
-    static func load(from url: URL) throws -> Diagram {
+    private struct VersionProbe: Decodable {
+        var version: Int?
+    }
+
+    /// Lit un fichier .cad2d : version 2 (plusieurs pages) ou version 1 (une seule page).
+    static func load(from url: URL) throws -> CADDocument {
         let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
         if let size = attrs[.size] as? Int, size > maxFileSize { throw DiagramIOError.fileTooLarge }
         let data = try Data(contentsOf: url)
-        let diagram = try JSONDecoder().decode(Diagram.self, from: data)
-        try validate(diagram)
-        return diagram
+        guard data.count <= maxFileSize else { throw DiagramIOError.fileTooLarge }
+        let version = (try? JSONDecoder().decode(VersionProbe.self, from: data))?.version ?? 1
+        let document: CADDocument
+        switch version {
+        case 1:
+            document = CADDocument(pages: [try JSONDecoder().decode(Diagram.self, from: data)])
+        case CADDocument.currentVersion:
+            document = try JSONDecoder().decode(CADDocument.self, from: data)
+        default:
+            throw DiagramIOError.unsupportedVersion(version)
+        }
+        try validate(document)
+        return document
     }
 
-    static func save(_ diagram: Diagram, to url: URL) throws {
-        try validate(diagram)
+    static func save(_ document: CADDocument, to url: URL) throws {
+        try validate(document)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(diagram).write(to: url, options: .atomic)
+        try encoder.encode(document).write(to: url, options: .atomic)
+    }
+
+    /// Enregistre une seule page (document d'une page).
+    static func save(_ diagram: Diagram, to url: URL) throws {
+        try save(CADDocument(pages: [diagram]), to: url)
+    }
+
+    static func validate(_ document: CADDocument) throws {
+        guard document.version == CADDocument.currentVersion else {
+            throw DiagramIOError.unsupportedVersion(document.version)
+        }
+        guard (1...CADDocument.maxPages).contains(document.pages.count) else {
+            throw DiagramIOError.invalid("nombre de pages incorrect")
+        }
+        guard Set(document.pages.map(\.id)).count == document.pages.count else {
+            throw DiagramIOError.invalid("identifiants de pages dupliqués")
+        }
+        let total = document.pages.reduce(0) { $0 + $1.shapes.count }
+        guard total <= maxShapes else { throw DiagramIOError.invalid("trop d'éléments") }
+        for page in document.pages { try validate(page) }
     }
 
     static func validate(_ d: Diagram) throws {
@@ -44,6 +81,16 @@ enum DiagramIO {
         }
         guard d.shapes.count <= maxShapes, d.connectors.count <= maxConnectors else {
             throw DiagramIOError.invalid("trop d'éléments")
+        }
+        guard d.name.count <= maxNameLength else { throw DiagramIOError.invalid("nom de page trop long") }
+        guard d.layers.count <= maxLayers else { throw DiagramIOError.invalid("trop de calques") }
+        let layerIDs = Set(d.layers.map(\.id))
+        guard layerIDs.count == d.layers.count else { throw DiagramIOError.invalid("identifiants de calques dupliqués") }
+        guard d.layers.allSatisfy({ $0.name.count <= maxNameLength }) else {
+            throw DiagramIOError.invalid("nom de calque trop long")
+        }
+        if let active = d.activeLayerID, !layerIDs.contains(active) {
+            throw DiagramIOError.invalid("calque actif inconnu")
         }
         let shapeIDs = Set(d.shapes.map(\.id))
         guard shapeIDs.count == d.shapes.count else { throw DiagramIOError.invalid("identifiants de formes dupliqués") }
@@ -57,6 +104,7 @@ enum DiagramIO {
                 throw DiagramIOError.invalid("coordonnées hors limites")
             }
             guard r.size.width > 0, r.size.height > 0 else { throw DiagramIOError.invalid("taille de forme nulle") }
+            if let l = s.layerID, !layerIDs.contains(l) { throw DiagramIOError.invalid("calque inconnu") }
             guard s.points.count <= 16, s.points.allSatisfy({
                 $0.x.isFinite && $0.y.isFinite && abs($0.x) <= maxCoordinate && abs($0.y) <= maxCoordinate
             }) else { throw DiagramIOError.invalid("points invalides") }

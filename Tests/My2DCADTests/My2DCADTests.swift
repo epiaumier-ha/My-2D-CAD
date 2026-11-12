@@ -45,7 +45,7 @@ final class PersistenceTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: url) }
         let d = sample()
         try DiagramIO.save(d, to: url)
-        XCTAssertEqual(try DiagramIO.load(from: url), d)
+        XCTAssertEqual(try DiagramIO.load(from: url).pages, [d])
     }
 
     func testRejectsOrphanConnector() {
@@ -243,7 +243,7 @@ final class StencilTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: url) }
         let d = Diagram(shapes: shapes)
         try DiagramIO.save(d, to: url)
-        XCTAssertEqual(try DiagramIO.load(from: url), d)
+        XCTAssertEqual(try DiagramIO.load(from: url).pages, [d])
     }
 }
 
@@ -349,7 +349,7 @@ final class PathTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("path-\(UUID().uuidString).cad2d")
         defer { try? FileManager.default.removeItem(at: url) }
         try DiagramIO.save(store.doc, to: url)
-        XCTAssertEqual(try DiagramIO.load(from: url), store.doc)
+        XCTAssertEqual(try DiagramIO.load(from: url).pages, [store.doc])
 
         store.selection = [store.doc.shapes[0].id]
         XCTAssertTrue(store.insertFragment(store.makeFragment()!, offset: 20))
@@ -501,7 +501,7 @@ final class RevisionTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("rev-\(UUID().uuidString).cad2d")
         defer { try? FileManager.default.removeItem(at: url) }
         try DiagramIO.save(d, to: url)
-        XCTAssertEqual(try DiagramIO.load(from: url), d)
+        XCTAssertEqual(try DiagramIO.load(from: url).pages, [d])
 
         var bad = s
         bad.textStyle.size = 0
@@ -517,5 +517,159 @@ final class RevisionTests: XCTestCase {
         store.tool = .ellipse
         store.tool = .select
         XCTAssertEqual(store.lastDrawingTool, .ellipse)
+    }
+}
+
+@MainActor
+final class PagesLayersGroupsTests: XCTestCase {
+    private func rect(_ x: CGFloat, _ y: CGFloat = 0) -> Shape {
+        Shape(kind: .rectangle, rect: CGRect(x: x, y: y, width: 40, height: 40))
+    }
+
+    func testPagesAreIndependentAndUndoable() {
+        let store = DocumentStore()
+        store.perform { $0.shapes = [self.rect(0)] }
+        store.addPage()
+        XCTAssertEqual(store.pageCount, 2)
+        XCTAssertEqual(store.currentPage, 1)
+        XCTAssertTrue(store.doc.shapes.isEmpty, "nouvelle page vide")
+        XCTAssertEqual(store.doc.name, "Page 2")
+        store.renamePage(1, to: "  Réseau  ")
+        XCTAssertEqual(store.doc.name, "Réseau")
+        store.selectPage(0)
+        XCTAssertEqual(store.doc.shapes.count, 1)
+        store.deletePage(1)
+        XCTAssertEqual(store.pageCount, 1)
+        store.undo()
+        XCTAssertEqual(store.pageCount, 2)
+        XCTAssertEqual(store.document.pages[1].name, "Réseau")
+        store.deletePage(0)
+        store.deletePage(0)   // la dernière page ne peut pas être supprimée
+        XCTAssertEqual(store.pageCount, 1)
+    }
+
+    func testDuplicatePageGetsNewIdentifiers() {
+        let store = DocumentStore()
+        var a = rect(0), b = rect(100)
+        let g = UUID()
+        a.groupID = g; b.groupID = g
+        store.perform { $0.shapes = [a, b]; $0.connectors = [Connector(fromShape: a.id, fromPort: 1, toShape: b.id, toPort: 3)] }
+        store.addLayer()
+        store.duplicatePage(0)
+        let copy = store.document.pages[1]
+        XCTAssertNotEqual(copy.id, store.document.pages[0].id)
+        XCTAssertTrue(Set(copy.shapes.map(\.id)).isDisjoint(with: [a.id, b.id]))
+        XCTAssertEqual(Set(copy.shapes.compactMap(\.groupID)).count, 1)
+        XCTAssertNotEqual(copy.shapes[0].groupID, g)
+        XCTAssertEqual(copy.connectors[0].fromShape, copy.shapes[0].id)
+        XCTAssertNotEqual(copy.layers[0].id, store.document.pages[0].layers[0].id)
+        XCTAssertNoThrow(try DiagramIO.validate(store.document))
+    }
+
+    func testLayersVisibilityLockAndPrint() {
+        let store = DocumentStore()
+        store.addLayer()
+        let layer = store.doc.activeLayerID!
+        store.beginTransaction()
+        store.insertShape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 40, height: 40))
+        store.commitTransaction()
+        let id = store.doc.shapes[0].id
+        XCTAssertEqual(store.doc.shapes[0].layerID, layer, "nouvelle forme sur le calque actif")
+        XCTAssertEqual(store.hitShape(at: CGPoint(x: 20, y: 20))?.id, id)
+
+        store.selection = [id]
+        store.updateLayer(layer, key: "locked") { $0.locked = true }
+        XCTAssertNil(store.hitShape(at: CGPoint(x: 20, y: 20)), "calque verrouillé : non sélectionnable")
+        XCTAssertTrue(store.selection.isEmpty)
+        store.updateLayer(layer, key: "locked") { $0.locked = false }
+
+        store.updateLayer(layer, key: "visible") { $0.visible = false }
+        store.selectAll()
+        XCTAssertTrue(store.selection.isEmpty)
+        XCTAssertFalse(store.doc.isPrintable(store.doc.shapes[0]))
+        store.updateLayer(layer, key: "visible") { $0.visible = true }
+        store.updateLayer(layer, key: "printable") { $0.printable = false }
+        XCTAssertNil(DiagramExporter.contentBounds(store.doc), "calque non imprimable : rien à exporter")
+
+        store.deleteLayer(layer)
+        XCTAssertEqual(store.doc.shapes.count, 1, "les formes du calque supprimé sont conservées")
+        XCTAssertNil(store.doc.shapes[0].layerID)
+    }
+
+    func testGroupSelectionAndPaste() {
+        let store = DocumentStore()
+        let a = rect(0), b = rect(100), c = rect(200)
+        store.perform { $0.shapes = [a, b, c] }
+        store.selection = [a.id, b.id]
+        store.groupSelection()
+        XCTAssertEqual(store.expandedToGroups([a.id]), [a.id, b.id])
+        XCTAssertEqual(store.selectedGroupBounds.count, 1)
+
+        XCTAssertTrue(store.insertFragment(store.makeFragment()!, offset: 20))
+        let pasted = store.doc.shapes.suffix(2)
+        XCTAssertEqual(Set(pasted.compactMap(\.groupID)).count, 1)
+        XCTAssertNotEqual(pasted.first?.groupID, store.doc.shapes[0].groupID, "le collage forme un nouveau groupe")
+
+        store.selection = [a.id, b.id]
+        store.ungroupSelection()
+        XCTAssertNil(store.doc.shape(a.id)?.groupID)
+        XCTAssertEqual(store.expandedToGroups([a.id]), [a.id])
+    }
+
+    func testAlignmentSnap() {
+        let target = CGRect(x: 100, y: 100, width: 50, height: 50)
+        // Bord gauche à 3 unités du bord gauche de la cible, centre vertical à 2 unités.
+        let snap = alignmentSnap(moving: CGRect(x: 103, y: 300, width: 20, height: 20),
+                                 targets: [target], tolerance: 6)
+        XCTAssertEqual(snap.dx, -3)
+        XCTAssertNil(snap.dy)
+        XCTAssertEqual(snap.guides.count, 1)
+        XCTAssertEqual(snap.guides[0].position, 100)
+        XCTAssertTrue(snap.guides[0].vertical)
+
+        let centre = alignmentSnap(moving: CGRect(origin: CGPoint(x: 400, y: 127), size: .zero),
+                                   targets: [target], tolerance: 6)
+        XCTAssertEqual(centre.dy, -2)
+        XCTAssertNil(alignmentSnap(moving: CGRect(x: 500, y: 500, width: 10, height: 10),
+                                   targets: [target], tolerance: 6).dx)
+    }
+
+    func testFileFormatV1AndV2() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("v1-\(UUID().uuidString).cad2d")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let a = rect(0)
+        let v1 = """
+        {"version":1,"shapes":[{"id":"\(a.id.uuidString)","kind":"rectangle","rect":[[0,0],[40,40]]}],"connectors":[]}
+        """
+        try Data(v1.utf8).write(to: url)
+        let doc = try DiagramIO.load(from: url)
+        XCTAssertEqual(doc.pages.count, 1)
+        XCTAssertEqual(doc.pages[0].shapes.first?.id, a.id)
+
+        var two = CADDocument(pages: [Diagram(name: "A"), Diagram(name: "B")])
+        two.pages[1].shapes = [a]
+        try DiagramIO.save(two, to: url)
+        XCTAssertEqual(try DiagramIO.load(from: url), two)
+
+        two.pages[1].shapes[0].layerID = UUID()
+        XCTAssertThrowsError(try DiagramIO.validate(two), "calque inconnu refusé")
+        two.pages[1].shapes[0].layerID = nil
+        two.pages[1].id = two.pages[0].id
+        XCTAssertThrowsError(try DiagramIO.validate(two), "pages en double refusées")
+    }
+
+    func testExportProducesFiles() throws {
+        let store = DocumentStore()
+        store.perform { $0.shapes = [self.rect(0), self.rect(100, 60)] }
+        store.addPage()
+        let png = try DiagramExporter.pngData(store.document.pages[0])
+        XCTAssertEqual(Array(png.prefix(4)), [0x89, 0x50, 0x4E, 0x47], "signature PNG")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("export-\(UUID().uuidString).pdf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try DiagramExporter.writePDF(store.document, to: url)
+        let data = try Data(contentsOf: url)
+        XCTAssertEqual(String(decoding: data.prefix(4), as: UTF8.self), "%PDF")
+        let size = (DiagramExporter.contentBounds(store.document.pages[0])?.size)!
+        XCTAssertEqual(size, CGSize(width: 140, height: 100))
     }
 }

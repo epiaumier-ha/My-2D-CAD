@@ -96,7 +96,8 @@ extension DocumentStore {
         guard doc.shapes.count < DiagramIO.maxShapes,
               center.x.isFinite, center.y.isFinite, abs(center.x) < limit, abs(center.y) < limit else { return }
         let origin = snap(CGPoint(x: center.x - item.size.width / 2, y: center.y - item.size.height / 2))
-        let shape = Shape(kind: item.kind, rect: CGRect(origin: origin, size: item.size), text: item.defaultText)
+        var shape = Shape(kind: item.kind, rect: CGRect(origin: origin, size: item.size), text: item.defaultText)
+        shape.layerID = doc.activeLayerID
         perform { $0.shapes.append(shape) }
         selection = [shape.id]
         tool = .select

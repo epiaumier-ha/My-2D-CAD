@@ -16,6 +16,11 @@ Application de dessin 2D inspirée de Microsoft Visio (macOS 14+, Swift 5.9, Swi
 - **Inspecteur à onglets** : Forme, Style (remplissage : aucun, couleur, transparence ; trait), Texte (taille, couleur, gras, italique, alignement), Organiser (aligner, répartir, pivoter, ordre).
 - **Ordre de superposition** (⇧⌘] premier plan, ⌘] avancer, ⌘[ reculer, ⇧⌘[ arrière-plan) et **menu contextuel** (clic droit).
 - **Connecteurs** : extrémités déplaçables vers une autre forme, inversion du sens.
+- **Pages** : onglets en bas du dessin (double-clic pour renommer, clic droit : dupliquer, déplacer, supprimer), menu Page, ⌥⌘N, ⌥⌘← / ⌥⌘→.
+- **Calques** (par page) : visible, verrouillé, imprimable, calque actif pour les nouvelles formes ; choix du calque dans l'inspecteur.
+- **Grouper / dissocier** (⌘G / ⇧⌘G) : un clic sélectionne tout le groupe.
+- **Repères d'alignement dynamiques** (Affichage) : alignement des bords et des centres sur les autres formes pendant le déplacement, le dessin et le redimensionnement.
+- **Export** : PDF vectoriel de toutes les pages (⌥⌘E), PNG haute résolution de la page (⇧⌥⌘E), impression (⌘P) ; calques masqués ou non imprimables exclus.
 - Formes : rectangle, ellipse, losange, texte (clic = taille par défaut, glisser = taille libre).
 - Sélection (clic, Maj+clic, rectangle de sélection), déplacement, redimensionnement par les coins.
 - Connecteurs orthogonaux collés aux points de connexion (haut/droite/bas/gauche) : ils suivent les formes.
@@ -24,7 +29,7 @@ Application de dessin 2D inspirée de Microsoft Visio (macOS 14+, Swift 5.9, Swi
 - Copier (⌘C), couper (⌘X), coller (⌘V, décalage en escalier) : les connecteurs entre formes copiées suivent.
 - Rotation : poignée ronde au-dessus de la forme (Maj = pas de 15°), champ « Rotation » de l'inspecteur, ⌃R / ⌃L pour ±90°.
 - Menu **Disposition** et inspecteur : aligner (gauche, centre, droite, haut, milieu, bas) et répartir horizontalement/verticalement.
-- Annuler/rétablir (100 niveaux), enregistrement/ouverture JSON (.cad2d) avec validation stricte du fichier.
+- Annuler/rétablir (100 niveaux), enregistrement/ouverture JSON (.cad2d, format v2 multipage ; les fichiers v1 restent lisibles) avec validation stricte du fichier.
 
 ## Architecture
 - `Model.swift` : données (Shape, Connector, Diagram), indépendantes du rendu.
@@ -32,6 +37,10 @@ Application de dessin 2D inspirée de Microsoft Visio (macOS 14+, Swift 5.9, Swi
 - `ShapeLibrary.swift` : tracés vectoriels de chaque type de forme.
 - `TextStyle.swift` : mise en forme du texte.
 - `StatusBar.swift` / `WindowCloseGuard.swift` : barre d'état, confirmation à la fermeture de la fenêtre.
+- `Rendering.swift` : dessin d'une page, partagé par le canevas et l'export.
+- `Export.swift` : PDF, PNG, impression.
+- `PagesLayersGroups.swift` / `PageBar.swift` : pages, calques, groupes et leur interface.
+- `Guides.swift` : repères d'alignement.
 - `LineStyle.swift` : attributs de trait et leur rendu.
 - `Paths.swift` : traits et courbes (points, échantillonnage, sélection).
 - `Stencils.swift` : catalogue des bibliothèques et panneau latéral.

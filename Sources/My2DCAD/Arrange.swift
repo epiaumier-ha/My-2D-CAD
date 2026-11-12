@@ -69,11 +69,20 @@ extension DocumentStore {
               doc.connectors.count + fragment.connectors.count <= DiagramIO.maxConnectors else { return false }
 
         var idMap: [UUID: UUID] = [:]
+        var groupMap: [UUID: UUID] = [:]
         var newShapes: [Shape] = []
+        let layerIDs = Set(doc.layers.map(\.id))
         for var s in fragment.shapes {
             let newID = UUID()
             idMap[s.id] = newID
             s.id = newID
+            // Les groupes copiés deviennent de nouveaux groupes ; un calque absent de la page
+            // (collage depuis une autre page ou un autre document) est remplacé par le calque actif.
+            if let g = s.groupID {
+                if groupMap[g] == nil { groupMap[g] = UUID() }
+                s.groupID = groupMap[g]
+            }
+            if let l = s.layerID, !layerIDs.contains(l) { s.layerID = doc.activeLayerID }
             s.rect.origin.x += offset
             s.rect.origin.y += offset
             newShapes.append(s)
@@ -87,7 +96,7 @@ extension DocumentStore {
             return copy
         }
         do {
-            try DiagramIO.validate(Diagram(shapes: newShapes, connectors: newConnectors))
+            try DiagramIO.validate(Diagram(shapes: newShapes, connectors: newConnectors, layers: doc.layers))
         } catch {
             return false
         }

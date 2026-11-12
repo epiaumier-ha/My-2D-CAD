@@ -58,9 +58,13 @@ struct Shape: Identifiable, Codable, Equatable {
     var noFill = false
     /// Transparence du remplissage : 0 = opaque, 1 = invisible.
     var fillTransparency: Double = 0
+    /// Calque de la forme (nil : aucun calque, toujours visible).
+    var layerID: UUID?
+    /// Groupe de la forme : toutes les formes d'un même groupe se sélectionnent ensemble.
+    var groupID: UUID?
 
     enum CodingKeys: String, CodingKey {
-        case id, kind, rect, text, fill, rotation, points, line, textStyle, noFill, fillTransparency
+        case id, kind, rect, text, fill, rotation, points, line, textStyle, noFill, fillTransparency, layerID, groupID
     }
 
     /// Couleur de remplissage effective (nil si aucun remplissage).
@@ -89,6 +93,8 @@ extension Shape {
         textStyle = try c.decodeIfPresent(TextStyle.self, forKey: .textStyle) ?? TextStyle()
         noFill = try c.decodeIfPresent(Bool.self, forKey: .noFill) ?? false
         fillTransparency = try c.decodeIfPresent(Double.self, forKey: .fillTransparency) ?? 0
+        layerID = try c.decodeIfPresent(UUID.self, forKey: .layerID)
+        groupID = try c.decodeIfPresent(UUID.self, forKey: .groupID)
     }
 }
 
@@ -117,14 +123,62 @@ extension Connector {
     }
 }
 
+/// Calque d'une page (équivalent des calques de Visio).
+struct Layer: Identifiable, Codable, Equatable {
+    var id = UUID()
+    var name: String
+    /// Formes affichées.
+    var visible = true
+    /// Formes affichées mais impossibles à sélectionner ou à modifier.
+    var locked = false
+    /// Formes incluses dans l'export PDF / PNG et l'impression.
+    var printable = true
+}
+
+/// Une page du dessin : formes, connecteurs et calques.
 struct Diagram: Codable, Equatable {
     static let currentVersion = 1
 
     var version = Diagram.currentVersion
     var shapes: [Shape] = []
     var connectors: [Connector] = []
+    var id = UUID()
+    var name = "Page 1"
+    var layers: [Layer] = []
+    /// Calque attribué aux nouvelles formes (nil : aucun calque).
+    var activeLayerID: UUID?
+
+    enum CodingKeys: String, CodingKey {
+        case version, shapes, connectors, id, name, layers, activeLayerID
+    }
 
     func shape(_ id: UUID) -> Shape? { shapes.first { $0.id == id } }
+
+    // MARK: Calques
+
+    func layer(_ id: UUID?) -> Layer? {
+        guard let id else { return nil }
+        return layers.first { $0.id == id }
+    }
+
+    func isVisible(_ s: Shape) -> Bool { layer(s.layerID)?.visible ?? true }
+
+    func isLocked(_ s: Shape) -> Bool { layer(s.layerID)?.locked ?? false }
+
+    /// Peut être cliquée, sélectionnée et modifiée.
+    func isSelectable(_ s: Shape) -> Bool { isVisible(s) && !isLocked(s) }
+
+    /// Incluse dans l'export et l'impression.
+    func isPrintable(_ s: Shape) -> Bool {
+        guard let l = layer(s.layerID) else { return true }
+        return l.visible && l.printable
+    }
+
+    /// Un connecteur est visible si ses deux formes le sont.
+    func isVisible(_ c: Connector) -> Bool {
+        guard let a = shape(c.fromShape), let b = shape(c.toShape) else { return false }
+        return isVisible(a) && isVisible(b)
+    }
 
     mutating func removeItems(_ ids: Set<UUID>) {
         shapes.removeAll { ids.contains($0.id) }
@@ -138,4 +192,27 @@ struct Diagram: Codable, Equatable {
         return routeConnector(from: a.portPoint(c.fromPort), dirA: a.portDirection(c.fromPort),
                               to: b.portPoint(c.toPort), dirB: b.portDirection(c.toPort))
     }
+}
+
+extension Diagram {
+    /// Décodage tolérant : les pages des anciens fichiers n'ont ni nom, ni calques.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decodeIfPresent(Int.self, forKey: .version) ?? Diagram.currentVersion
+        shapes = try c.decodeIfPresent([Shape].self, forKey: .shapes) ?? []
+        connectors = try c.decodeIfPresent([Connector].self, forKey: .connectors) ?? []
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Page 1"
+        layers = try c.decodeIfPresent([Layer].self, forKey: .layers) ?? []
+        activeLayerID = try c.decodeIfPresent(UUID.self, forKey: .activeLayerID)
+    }
+}
+
+/// Document complet : une ou plusieurs pages (format de fichier version 2).
+struct CADDocument: Codable, Equatable {
+    static let currentVersion = 2
+    static let maxPages = 200
+
+    var version = CADDocument.currentVersion
+    var pages: [Diagram] = [Diagram()]
 }
