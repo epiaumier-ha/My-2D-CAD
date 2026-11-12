@@ -47,7 +47,11 @@ struct DiagramPainter {
 
     /// Tracé écran d'un trait ou d'une courbe à partir de ses points monde.
     func screenPath(kind: ShapeKind, points world: [CGPoint]) -> Path {
-        let p = world.map { toScreen($0) }
+        var p = world.map { toScreen($0) }
+        if kind == .dimension, p.count == 3 {
+            let g = dimensionGeometry(p[0], p[1], p[2])
+            p = [g.a, g.a2, g.b2, g.b]
+        }
         var path = Path()
         if kind == .curve, p.count == 3 {
             path.move(to: p[0])
@@ -60,6 +64,7 @@ struct DiagramPainter {
     }
 
     func drawPathShape(_ s: Shape, in ctx: inout GraphicsContext) {
+        if s.kind == .dimension { drawDimension(s, in: &ctx); return }
         let world = s.worldPoints
         if s.line.dash != .none {
             ctx.stroke(screenPath(kind: s.kind, points: world), with: .color(s.line.displayColor),
@@ -87,7 +92,7 @@ struct DiagramPainter {
         let r = toScreen(s.rect)
         if s.kind != .text {
             let t = rotationTransform(s, screenRect: r)
-            let parts = s.kind.paths(in: r)
+            let parts = s.paths(in: r)
             let lineColor = s.line.displayColor
             let style = s.line.strokeStyle(zoom: zoom)
             let showLine = s.line.dash != .none
@@ -118,7 +123,7 @@ struct DiagramPainter {
     @ViewBuilder
     func labelView(_ s: Shape) -> some View {
         let placeholder = s.text.isEmpty && s.kind == .text
-        let content = placeholder ? "Texte" : s.text
+        let content = placeholder ? "Texte" : (s.kind == .dimension ? dimensionText(s) : s.text)
         let ts = s.textStyle
         let r = toScreen(s.rect)
         let text = Text(content)
@@ -164,42 +169,64 @@ struct DiagramPainter {
     /// Pointe de flèche à l'extrémité `tip`, orientée depuis `from` (coordonnées écran).
     func drawArrow(_ type: ArrowHead, tip: CGPoint, from: CGPoint, style l: LineStyle,
                            in ctx: inout GraphicsContext) {
-        guard type != .none else { return }
-        let len = tip.distance(to: from)
-        guard len > 0.01 else { return }
-        let ux = (tip.x - from.x) / len, uy = (tip.y - from.y) / len
-        let size = l.arrowLength(zoom: zoom)
-        let half = size * 0.45
-        func at(_ back: CGFloat, _ side: CGFloat) -> CGPoint {
-            CGPoint(x: tip.x - ux * back - uy * side, y: tip.y - uy * back + ux * side)
-        }
+        guard let head = arrowHead(type, tip: tip, from: from, size: l.arrowLength(zoom: zoom)) else { return }
         let shading = GraphicsContext.Shading.color(l.displayColor)
-        switch type {
-        case .none:
-            break
-        case .filled:
-            var p = Path()
-            p.addLines([tip, at(size, half), at(size, -half)])
-            p.closeSubpath()
-            ctx.fill(p, with: shading)
-        case .open:
-            var p = Path()
-            p.move(to: at(size, half))
-            p.addLine(to: tip)
-            p.addLine(to: at(size, -half))
-            ctx.stroke(p, with: shading,
+        if head.filled {
+            ctx.fill(head.path, with: shading)
+        } else {
+            ctx.stroke(head.path, with: shading,
                        style: StrokeStyle(lineWidth: max(CGFloat(l.width) * zoom, 0.75),
                                           lineCap: .round, lineJoin: .round))
-        case .circle:
-            let r = size * 0.32
-            let c = at(r, 0)
-            ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)), with: shading)
-        case .diamond:
-            var p = Path()
-            p.addLines([tip, at(size / 2, half * 0.8), at(size, 0), at(size / 2, -half * 0.8)])
-            p.closeSubpath()
-            ctx.fill(p, with: shading)
         }
+    }
+
+    // MARK: - Cotes
+
+    /// Texte d'une cote : mesure automatique (unité et échelle de la page), ou texte saisi.
+    func dimensionText(_ s: Shape) -> String {
+        guard s.text.isEmpty, let g = s.dimension else { return s.text }
+        return diagram.formatLength(g.length)
+    }
+
+    /// Angle du texte d'une cote, ramené pour rester lisible (jamais à l'envers).
+    static func readableAngle(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
+        var angle = atan2(b.y - a.y, b.x - a.x)
+        if angle > .pi / 2 { angle -= .pi } else if angle <= -.pi / 2 { angle += .pi }
+        return angle
+    }
+
+    /// Cote : lignes d'attache (avec dépassement), ligne de cote fléchée, mesure au-dessus.
+    func drawDimension(_ s: Shape, in ctx: inout GraphicsContext) {
+        guard let g = s.dimension else { return }
+        let a = toScreen(g.a), b = toScreen(g.b), a2 = toScreen(g.a2), b2 = toScreen(g.b2)
+        let shading = GraphicsContext.Shading.color(s.line.displayColor)
+        let style = s.line.strokeStyle(zoom: zoom)
+        if s.line.dash != .none {
+            // Lignes d'attache : petit jeu côté forme, dépassement de 4 pt au-delà de la ligne de cote.
+            let len = a.distance(to: a2)
+            if len > 0.5 {
+                let ux = (a2.x - a.x) / len, uy = (a2.y - a.y) / len
+                let gap: CGFloat = 2 * zoom, over: CGFloat = 4 * zoom
+                var ext = Path()
+                ext.move(to: CGPoint(x: a.x + ux * gap, y: a.y + uy * gap))
+                ext.addLine(to: CGPoint(x: a2.x + ux * over, y: a2.y + uy * over))
+                ext.move(to: CGPoint(x: b.x + ux * gap, y: b.y + uy * gap))
+                ext.addLine(to: CGPoint(x: b2.x + ux * over, y: b2.y + uy * over))
+                ctx.stroke(ext, with: shading, style: style)
+            }
+            var dim = Path()
+            dim.move(to: a2)
+            dim.addLine(to: b2)
+            ctx.stroke(dim, with: shading, style: style)
+        }
+        drawArrow(s.line.beginArrow, tip: a2, from: b2, style: s.line, in: &ctx)
+        drawArrow(s.line.endArrow, tip: b2, from: a2, style: s.line, in: &ctx)
+
+        guard editingShapeID != s.id, let label = ctx.resolveSymbol(id: s.id) else { return }
+        var tc = ctx
+        tc.translateBy(x: (a2.x + b2.x) / 2, y: (a2.y + b2.y) / 2)
+        tc.rotate(by: .radians(Double(Self.readableAngle(a2, b2))))
+        tc.draw(label, at: CGPoint(x: 0, y: -2 * zoom), anchor: .bottom)
     }
 
 }
@@ -220,5 +247,39 @@ struct ExportPageView: View {
         }
         .frame(width: size.width, height: size.height)
         .environment(\.colorScheme, .light)
+    }
+}
+
+/// Géométrie d'une pointe de flèche (coordonnées écran) : tracé et remplissage (sinon trait).
+func arrowHead(_ type: ArrowHead, tip: CGPoint, from: CGPoint, size: CGFloat) -> (path: Path, filled: Bool)? {
+    guard type != .none else { return nil }
+    let len = tip.distance(to: from)
+    guard len > 0.01 else { return nil }
+    let ux = (tip.x - from.x) / len, uy = (tip.y - from.y) / len
+    let half = size * 0.45
+    func at(_ back: CGFloat, _ side: CGFloat) -> CGPoint {
+        CGPoint(x: tip.x - ux * back - uy * side, y: tip.y - uy * back + ux * side)
+    }
+    var p = Path()
+    switch type {
+    case .none:
+        return nil
+    case .filled:
+        p.addLines([tip, at(size, half), at(size, -half)])
+        p.closeSubpath()
+        return (p, true)
+    case .open:
+        p.move(to: at(size, half))
+        p.addLine(to: tip)
+        p.addLine(to: at(size, -half))
+        return (p, false)
+    case .circle:
+        let r = size * 0.32
+        let c = at(r, 0)
+        return (Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r)), true)
+    case .diamond:
+        p.addLines([tip, at(size / 2, half * 0.8), at(size, 0), at(size / 2, -half * 0.8)])
+        p.closeSubpath()
+        return (p, true)
     }
 }

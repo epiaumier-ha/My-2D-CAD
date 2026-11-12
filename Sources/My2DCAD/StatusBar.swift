@@ -25,15 +25,23 @@ struct StatusBar: View {
         .background(.bar)
     }
 
+    /// Position du pointeur dans l'unité de la page (échelle comprise).
     private var pointerText: String {
-        guard let p = pointer.world else { return "X —   Y —" }
-        return String(format: "X %.0f   Y %.0f", p.x, p.y)
+        let d = store.doc
+        guard let p = pointer.world else { return "X —   Y —   \(d.unit.symbol)" }
+        let x = Diagram.format(d.measure(p.x), decimals: d.precision)
+        let y = Diagram.format(d.measure(p.y), decimals: d.precision)
+        return "X \(x)   Y \(y)   \(d.unit.symbol)"
     }
 
     private var selectionText: String {
         if let s = store.singleSelectedShape {
+            let d = store.doc
+            if let g = s.dimension { return "Cote : " + d.formatLength(g.length) }
             if s.kind.isPath { return s.kind.displayName }
-            return String(format: "%@  L %.0f × H %.0f", s.kind.displayName, s.rect.width, s.rect.height)
+            let w = Diagram.format(d.measure(s.rect.width), decimals: d.precision)
+            let h = Diagram.format(d.measure(s.rect.height), decimals: d.precision)
+            return "\(s.kind.displayName)  L \(w) × H \(h) \(d.unit.symbol)"
         }
         let n = store.selection.count
         switch n {

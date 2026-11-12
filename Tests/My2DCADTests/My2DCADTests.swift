@@ -212,7 +212,7 @@ final class StencilTests: XCTestCase {
             XCTAssertGreaterThan(item.size.height, 0)
         }
         // Tous les types sauf « texte » sont proposés dans une bibliothèque.
-        for kind in ShapeKind.allCases where kind != .text && !kind.isPath {
+        for kind in ShapeKind.allCases where kind != .text && kind != .freeform && !kind.isPath {
             XCTAssertNotNil(StencilCatalog.item(for: kind), "\(kind) absent des bibliothèques")
         }
     }
@@ -671,5 +671,142 @@ final class PagesLayersGroupsTests: XCTestCase {
         XCTAssertEqual(String(decoding: data.prefix(4), as: UTF8.self), "%PDF")
         let size = (DiagramExporter.contentBounds(store.document.pages[0])?.size)!
         XCTAssertEqual(size, CGSize(width: 140, height: 100))
+    }
+}
+
+@MainActor
+final class CADFeaturesTests: XCTestCase {
+    func testUnitsAndScale() {
+        var d = Diagram()
+        XCTAssertEqual(d.measure(72), 25.4, accuracy: 1e-9, "72 pt = 25,4 mm")
+        XCTAssertEqual(d.formatLength(72), "25,4 mm")
+        d.scale = 100
+        d.unit = .m
+        d.precision = 2
+        XCTAssertEqual(d.formatLength(72), "2,54 m", "échelle 1:100")
+        XCTAssertEqual(d.worldLength(forMeasure: 2.54), 72, accuracy: 1e-6)
+    }
+
+    func testDimensionGeometryAndEditing() {
+        let store = DocumentStore()
+        store.beginTransaction()
+        store.insertPath(kind: .dimension, from: CGPoint(x: 0, y: 0), to: CGPoint(x: 144, y: 0))
+        store.commitTransaction()
+        let s = store.doc.shapes[0]
+        let g = s.dimension!
+        XCTAssertEqual(g.length, 144, accuracy: 1e-9)
+        XCTAssertEqual(g.offset, 24, accuracy: 1e-9)
+        XCTAssertEqual(g.a2.y, -24, accuracy: 1e-9, "ligne de cote au-dessus")
+        XCTAssertEqual(store.doc.formatLength(g.length), "50,8 mm")
+        let moved = s.dimensionPoints(moving: 1, to: CGPoint(x: 72, y: 0))
+        XCTAssertEqual(dimensionGeometry(moved[0], moved[1], moved[2]).offset, 24, accuracy: 1e-9, "le décalage est conservé")
+        XCTAssertNotNil(store.hitShape(at: CGPoint(x: 70, y: -24)))
+        XCTAssertNoThrow(try DiagramIO.validate(store.doc))
+    }
+
+    func testOrthogonalRouteAvoidsObstacle() {
+        let a = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 40, height: 40))
+        let b = Shape(kind: .rectangle, rect: CGRect(x: 300, y: 0, width: 40, height: 40))
+        let wall = Shape(kind: .rectangle, rect: CGRect(x: 150, y: -30, width: 40, height: 100))
+        let c = Connector(fromShape: a.id, fromPort: 1, toShape: b.id, toPort: 3)
+        let d = Diagram(shapes: [a, b, wall], connectors: [c])
+        let route = d.connectorPoints(c)!
+        XCTAssertEqual(route.first, CGPoint(x: 40, y: 20))
+        XCTAssertEqual(route.last, CGPoint(x: 300, y: 20))
+        for i in 0..<(route.count - 1) {
+            let p = route[i], q = route[i + 1]
+            XCTAssertTrue(p.x == q.x || p.y == q.y, "segment orthogonal")
+            for k in 0...20 {
+                let t = CGFloat(k) / 20
+                let m = CGPoint(x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t)
+                XCTAssertFalse(wall.rect.insetBy(dx: 1, dy: 1).contains(m), "le tracé traverse l'obstacle en \(m)")
+            }
+        }
+        var straight = c
+        straight.routing = .straight
+        XCTAssertEqual(d.connectorPoints(straight)!, [CGPoint(x: 40, y: 20), CGPoint(x: 300, y: 20)])
+        var curved = c
+        curved.routing = .curved
+        let pts = d.connectorPoints(curved)!
+        XCTAssertEqual(pts.first, CGPoint(x: 40, y: 20))
+        XCTAssertEqual(pts.last!.x, 300, accuracy: 1e-9)
+    }
+
+    func testRulerGuidesSnap() {
+        let snap = alignmentSnap(moving: CGRect(x: 97, y: 0, width: 20, height: 20), targets: [],
+                                 tolerance: 6, verticalLines: [100])
+        XCTAssertEqual(snap.dx, 3)
+        let store = DocumentStore()
+        store.addGuide(GuideLine(vertical: true, position: 100))
+        XCTAssertEqual(store.doc.guides.count, 1)
+        store.undo()
+        XCTAssertTrue(store.doc.guides.isEmpty)
+        var bad = Diagram()
+        bad.guides = [GuideLine(vertical: false, position: .nan)]
+        XCTAssertThrowsError(try DiagramIO.validate(bad))
+        bad = Diagram()
+        bad.scale = 0
+        XCTAssertThrowsError(try DiagramIO.validate(bad))
+    }
+
+    func testSVGPathParser() {
+        let p = SVGPathParser.parse("M10 10 h20 v20 H10 z m40 0 a10 10 0 1 0 20 0 a10 10 0 1 0 -20 0")!
+        let box = p.cgPath.boundingBoxOfPath
+        XCTAssertEqual(box.minX, 10, accuracy: 0.01)
+        XCTAssertEqual(box.maxX, 70, accuracy: 0.01)
+        XCTAssertEqual(SVGPathParser.numbers("1.5.5-2e1,3"), [1.5, 0.5, -20, 3])
+        XCTAssertNil(SVGPathParser.parse("n'importe quoi"))
+    }
+
+    func testSVGImport() throws {
+        let svg = """
+        <?xml version="1.0"?>
+        <!DOCTYPE svg [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+        <svg xmlns="http://www.w3.org/2000/svg" width="200pt" height="100pt" viewBox="0 0 400 200">
+          <defs><rect id="cache" width="5" height="5"/></defs>
+          <rect x="0" y="0" width="100" height="50" fill="#ff0000" stroke="black" stroke-width="2"/>
+          <g transform="translate(200 0)">
+            <circle cx="50" cy="50" r="25" style="fill:none;stroke:#0000ff"/>
+            <line x1="0" y1="100" x2="100" y2="100" stroke="green"/>
+            <path d="M0 150 L50 190 L100 150 Z" fill="rgb(0,128,0)"/>
+          </g>
+          <text x="10" y="180" font-size="20" font-weight="bold">Bonjour &xxe;</text>
+        </svg>
+        """
+        let shapes = try SVGImporter.shapes(from: Data(svg.utf8))
+        XCTAssertEqual(shapes.map(\.kind), [.rectangle, .ellipse, .line, .freeform, .text])
+        // viewBox 400 → 200 pt : échelle 0,5.
+        XCTAssertEqual(shapes[0].rect, CGRect(x: 0, y: 0, width: 50, height: 25))
+        XCTAssertEqual(shapes[0].fill, RGBA(r: 1, g: 0, b: 0, a: 1))
+        XCTAssertEqual(shapes[0].line.width, 1, accuracy: 1e-9)
+        XCTAssertEqual(shapes[1].rect, CGRect(x: 112.5, y: 12.5, width: 25, height: 25))
+        XCTAssertTrue(shapes[1].noFill)
+        XCTAssertFalse(shapes[4].text.contains("root"), "entité externe non résolue")
+        XCTAssertTrue(shapes[4].textStyle.bold)
+
+        let store = DocumentStore()
+        try store.importSVG(data: Data(svg.utf8))
+        XCTAssertEqual(store.doc.shapes.count, 5)
+        XCTAssertEqual(Set(store.doc.shapes.compactMap(\.groupID)).count, 1, "import regroupé")
+        store.undo()
+        XCTAssertTrue(store.doc.shapes.isEmpty)
+
+        XCTAssertThrowsError(try SVGImporter.shapes(from: Data("<html></html>".utf8)))
+    }
+
+    func testSVGExportRoundTrip() throws {
+        var d = Diagram()
+        var r = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 100, height: 50), text: "A & B")
+        r.fill = RGBA(r: 0, g: 0, b: 1, a: 1)
+        let e = Shape(kind: .ellipse, rect: CGRect(x: 200, y: 0, width: 60, height: 60))
+        d.shapes = [r, e]
+        d.connectors = [Connector(fromShape: r.id, fromPort: 1, toShape: e.id, toPort: 3)]
+        let svg = SVGExporter.svg(for: d)
+        XCTAssertTrue(svg.contains("<svg"))
+        XCTAssertTrue(svg.contains("A &amp; B"))
+        XCTAssertTrue(svg.contains("#0000ff"))
+        let back = try SVGImporter.shapes(from: Data(svg.utf8))
+        XCTAssertGreaterThanOrEqual(back.count, 4, "fond, rectangle, ellipse, connecteur et texte relus")
+        XCTAssertTrue(back.contains { $0.kind == .text && $0.text == "A & B" })
     }
 }

@@ -30,6 +30,8 @@ enum ShapeKind: String, Codable, CaseIterable {
     case rectangle, ellipse, diamond, text
     // Tracés libres : trait (2 points) et courbe de Bézier quadratique (début, contrôle, fin)
     case line, curve
+    // Cote linéaire (2 points mesurés + point de décalage) et forme libre (tracé quelconque, import SVG)
+    case dimension, freeform
     // Organigramme
     case terminator, data, document, predefinedProcess, manualInput, preparation
     case database, offPageReference, delay, manualOperation
@@ -62,9 +64,12 @@ struct Shape: Identifiable, Codable, Equatable {
     var layerID: UUID?
     /// Groupe de la forme : toutes les formes d'un même groupe se sélectionnent ensemble.
     var groupID: UUID?
+    /// Tracé d'une forme libre, en coordonnées relatives au rectangle (0…1).
+    var segments: [PathSegment] = []
 
     enum CodingKeys: String, CodingKey {
         case id, kind, rect, text, fill, rotation, points, line, textStyle, noFill, fillTransparency, layerID, groupID
+        case segments
     }
 
     /// Couleur de remplissage effective (nil si aucun remplissage).
@@ -95,6 +100,7 @@ extension Shape {
         fillTransparency = try c.decodeIfPresent(Double.self, forKey: .fillTransparency) ?? 0
         layerID = try c.decodeIfPresent(UUID.self, forKey: .layerID)
         groupID = try c.decodeIfPresent(UUID.self, forKey: .groupID)
+        segments = try c.decodeIfPresent([PathSegment].self, forKey: .segments) ?? []
     }
 }
 
@@ -107,8 +113,9 @@ struct Connector: Identifiable, Codable, Equatable {
     var toShape: UUID
     var toPort: Int
     var line = LineStyle.connectorDefault
+    var routing: ConnectorRouting = .orthogonal
 
-    enum CodingKeys: String, CodingKey { case id, fromShape, fromPort, toShape, toPort, line }
+    enum CodingKeys: String, CodingKey { case id, fromShape, fromPort, toShape, toPort, line, routing }
 }
 
 extension Connector {
@@ -120,6 +127,7 @@ extension Connector {
         toShape = try c.decode(UUID.self, forKey: .toShape)
         toPort = try c.decode(Int.self, forKey: .toPort)
         line = try c.decodeIfPresent(LineStyle.self, forKey: .line) ?? .connectorDefault
+        routing = try c.decodeIfPresent(ConnectorRouting.self, forKey: .routing) ?? .orthogonal
     }
 }
 
@@ -147,9 +155,18 @@ struct Diagram: Codable, Equatable {
     var layers: [Layer] = []
     /// Calque attribué aux nouvelles formes (nil : aucun calque).
     var activeLayerID: UUID?
+    /// Unité affichée (règles, cotes, barre d'état), échelle du dessin (1:scale) et décimales.
+    var unit: MeasureUnit = .mm
+    var scale: Double = 1
+    var precision: Int = 1
+    /// Routage des nouveaux connecteurs.
+    var defaultRouting: ConnectorRouting = .orthogonal
+    /// Repères tirés des règles.
+    var guides: [GuideLine] = []
 
     enum CodingKeys: String, CodingKey {
         case version, shapes, connectors, id, name, layers, activeLayerID
+        case unit, scale, precision, defaultRouting, guides
     }
 
     func shape(_ id: UUID) -> Shape? { shapes.first { $0.id == id } }
@@ -186,12 +203,6 @@ struct Diagram: Codable, Equatable {
             ids.contains($0.id) || ids.contains($0.fromShape) || ids.contains($0.toShape)
         }
     }
-
-    func connectorPoints(_ c: Connector) -> [CGPoint]? {
-        guard let a = shape(c.fromShape), let b = shape(c.toShape) else { return nil }
-        return routeConnector(from: a.portPoint(c.fromPort), dirA: a.portDirection(c.fromPort),
-                              to: b.portPoint(c.toPort), dirB: b.portDirection(c.toPort))
-    }
 }
 
 extension Diagram {
@@ -205,6 +216,11 @@ extension Diagram {
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Page 1"
         layers = try c.decodeIfPresent([Layer].self, forKey: .layers) ?? []
         activeLayerID = try c.decodeIfPresent(UUID.self, forKey: .activeLayerID)
+        unit = try c.decodeIfPresent(MeasureUnit.self, forKey: .unit) ?? .mm
+        scale = try c.decodeIfPresent(Double.self, forKey: .scale) ?? 1
+        precision = try c.decodeIfPresent(Int.self, forKey: .precision) ?? 1
+        defaultRouting = try c.decodeIfPresent(ConnectorRouting.self, forKey: .defaultRouting) ?? .orthogonal
+        guides = try c.decodeIfPresent([GuideLine].self, forKey: .guides) ?? []
     }
 }
 

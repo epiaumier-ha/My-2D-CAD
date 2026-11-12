@@ -3,7 +3,7 @@ import AppKit
 import UniformTypeIdentifiers
 
 enum Tool: String, CaseIterable, Identifiable {
-    case select, pan, rectangle, ellipse, diamond, text, line, curve, connector
+    case select, pan, rectangle, ellipse, diamond, text, line, curve, dimension, connector
 
     var id: String { rawValue }
 
@@ -17,6 +17,7 @@ enum Tool: String, CaseIterable, Identifiable {
         case .text: return "Texte"
         case .line: return "Trait"
         case .curve: return "Courbe"
+        case .dimension: return "Cote"
         case .connector: return "Connecteur"
         }
     }
@@ -31,6 +32,7 @@ enum Tool: String, CaseIterable, Identifiable {
         case .text: return "textformat"
         case .line: return "line.diagonal"
         case .curve: return "scribble"
+        case .dimension: return "ruler"
         case .connector: return "arrow.up.right"
         }
     }
@@ -46,6 +48,7 @@ enum Tool: String, CaseIterable, Identifiable {
         case .text: return "t"
         case .line: return "l"
         case .curve: return "b"
+        case .dimension: return "m"
         case .connector: return "c"
         }
     }
@@ -54,7 +57,7 @@ enum Tool: String, CaseIterable, Identifiable {
     var labelWithShortcut: String { "\(label) (\(String(shortcut).uppercased()))" }
 
     /// Outils regroupés dans le menu « Dessin » de la barre d'outils.
-    static let drawingTools: [Tool] = [.rectangle, .ellipse, .diamond, .line, .curve]
+    static let drawingTools: [Tool] = [.rectangle, .ellipse, .diamond, .line, .curve, .dimension]
 
     var isDrawingTool: Bool { Tool.drawingTools.contains(self) }
 
@@ -66,6 +69,7 @@ enum Tool: String, CaseIterable, Identifiable {
         case .text: return .text
         case .line: return .line
         case .curve: return .curve
+        case .dimension: return .dimension
         default: return nil
         }
     }
@@ -112,6 +116,10 @@ final class DocumentStore: ObservableObject {
     @Published var snapEnabled = true
     /// Repères d'alignement dynamiques pendant le déplacement et le dessin.
     @Published var guidesEnabled = true
+    /// Règles graduées au bord du dessin.
+    @Published var showRulers = true
+    /// Repère en cours de création depuis une règle (aperçu, pas encore dans le document).
+    @Published var rulerGuidePreview: GuideLine?
     let gridSize: CGFloat = 20
 
     // Fichier

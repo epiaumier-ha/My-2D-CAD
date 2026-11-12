@@ -29,6 +29,7 @@ private enum Interaction {
     case moving(origins: [UUID: CGPoint], start: CGPoint, primary: UUID, bounds: CGRect)
     case resizing(original: Shape, handle: Handle)
     case editingPoint(id: UUID, index: Int)
+    case movingGuide(id: UUID)
     case reconnecting(id: UUID, start: Bool, current: CGPoint)
     case rotating(original: Shape, startAngle: CGFloat)
     case drawing(kind: ShapeKind, start: CGPoint, current: CGPoint)
@@ -196,7 +197,7 @@ struct CanvasView: View {
             NSCursor.closedHand.set()
             interaction = .panning(startOffset: store.offset)
 
-        case .rectangle, .ellipse, .diamond, .text, .line, .curve:
+        case .rectangle, .ellipse, .diamond, .text, .line, .curve, .dimension:
             if let kind = store.tool.shapeKind {
                 let p = snapPoint(w)
                 interaction = .drawing(kind: kind, start: p, current: p)
@@ -269,6 +270,8 @@ struct CanvasView: View {
                         .prefix(3000).map(\.bounds)
                     interaction = .moving(origins: origins, start: w, primary: s.id, bounds: bounds ?? s.bounds)
                 }
+            } else if let g = guideHit(at: screen) {
+                interaction = .movingGuide(id: g)
             } else if let c = store.hitConnector(at: w) {
                 if additive { store.selection.insert(c.id) } else { store.selection = [c.id] }
             } else {
@@ -290,9 +293,11 @@ struct CanvasView: View {
             var dx = snapped.x - po.x, dy = snapped.y - po.y
             // Repères dynamiques : l'alignement sur une autre forme l'emporte sur la grille.
             guides = []
-            if store.guidesEnabled {
-                let a = alignmentSnap(moving: bounds.offsetBy(dx: rawDx, dy: rawDy), targets: guideTargets,
-                                      tolerance: 6 / store.zoom)
+            do {
+                let a = alignmentSnap(moving: bounds.offsetBy(dx: rawDx, dy: rawDy),
+                                      targets: store.guidesEnabled ? guideTargets : [],
+                                      tolerance: 6 / store.zoom,
+                                      verticalLines: rulerLines(vertical: true), horizontalLines: rulerLines(vertical: false))
                 if let gx = a.dx { dx = rawDx + gx }
                 if let gy = a.dy { dy = rawDy + gy }
                 guides = a.guides
@@ -335,13 +340,24 @@ struct CanvasView: View {
             guard let i = shapeIndex(id) else { return }
             var pts = store.doc.shapes[i].worldPoints
             guard pts.indices.contains(index) else { return }
-            let isControl = store.doc.shapes[i].kind == .curve && index == 1
-            pts[index] = isControl ? w : snapPoint(w)
-            store.doc.shapes[i].setWorldPoints(pts)
+            let shape = store.doc.shapes[i]
+            let isControl = (shape.kind == .curve && index == 1) || (shape.kind == .dimension && index == 2)
+            let q = isControl ? w : snapPoint(w)
+            if shape.kind == .dimension {
+                store.doc.shapes[i].setWorldPoints(shape.dimensionPoints(moving: index, to: q))
+            } else {
+                pts[index] = q
+                store.doc.shapes[i].setWorldPoints(pts)
+            }
+
+        case .movingGuide(let id):
+            guard let gi = store.doc.guides.firstIndex(where: { $0.id == id }) else { return }
+            let p = store.snap(w)
+            store.doc.guides[gi].position = store.doc.guides[gi].vertical ? p.x : p.y
 
         case .drawing(let kind, let start, _):
             var end = snapPoint(w)
-            if kind == .line && NSEvent.modifierFlags.contains(.shift) {
+            if (kind == .line || kind == .dimension) && NSEvent.modifierFlags.contains(.shift) {
                 // Maj : trait contraint à un multiple de 45°.
                 let dx = end.x - start.x, dy = end.y - start.y
                 let angle = (atan2(dy, dx) / (.pi / 4)).rounded() * (.pi / 4)
@@ -395,8 +411,9 @@ struct CanvasView: View {
 
         case .connecting(let from, let port, let end):
             if let target = store.hitShape(at: end, includePaths: false), target.id != from {
-                let c = Connector(fromShape: from, fromPort: port,
+                var c = Connector(fromShape: from, fromPort: port,
                                   toShape: target.id, toPort: target.nearestPort(to: end))
+                c.routing = store.doc.defaultRouting
                 let duplicate = store.doc.connectors.contains {
                     $0.fromShape == c.fromShape && $0.fromPort == c.fromPort &&
                     $0.toShape == c.toShape && $0.toPort == c.toPort
@@ -405,6 +422,12 @@ struct CanvasView: View {
                     store.doc.connectors.append(c)
                     store.selection = [c.id]
                 }
+            }
+
+        case .movingGuide(let id):
+            // Repère ramené sur une règle (hors du dessin) : il est supprimé.
+            if v.location.x < 0 || v.location.y < 0 {
+                store.doc.guides.removeAll { $0.id == id }
             }
 
         case .reconnecting(let id, let start, let end):
@@ -444,6 +467,7 @@ struct CanvasView: View {
         }
 
         drawSelection(&ctx)
+        drawRulerGuides(&ctx, size: size)
         drawGuides(&ctx)
         drawInteractionPreview(&ctx)
     }
@@ -463,12 +487,45 @@ struct CanvasView: View {
     private func snapPoint(_ w: CGPoint) -> CGPoint {
         var p = store.snap(w)
         guides = []
-        guard store.guidesEnabled else { return p }
-        let a = alignmentSnap(moving: CGRect(origin: w, size: .zero), targets: guideTargets, tolerance: 6 / store.zoom)
+        // Repères des règles : toujours ; autres formes : si les repères dynamiques sont activés.
+        let a = alignmentSnap(moving: CGRect(origin: w, size: .zero),
+                              targets: store.guidesEnabled ? guideTargets : [], tolerance: 6 / store.zoom,
+                              verticalLines: rulerLines(vertical: true), horizontalLines: rulerLines(vertical: false))
         if let dx = a.dx { p.x = w.x + dx }
         if let dy = a.dy { p.y = w.y + dy }
         guides = a.guides
         return p
+    }
+
+    // MARK: - Repères tirés des règles
+
+    private func rulerLines(vertical: Bool) -> [CGFloat] {
+        store.doc.guides.filter { $0.vertical == vertical }.map(\.position)
+    }
+
+    /// Repère sous le pointeur (à 4 pixels près).
+    private func guideHit(at screen: CGPoint) -> UUID? {
+        store.doc.guides.last { g in
+            let p = store.toScreen(CGPoint(x: g.position, y: g.position))
+            return g.vertical ? abs(p.x - screen.x) <= 4 : abs(p.y - screen.y) <= 4
+        }?.id
+    }
+
+    private func drawRulerGuides(_ ctx: inout GraphicsContext, size: CGSize) {
+        let color = Color(red: 0.1, green: 0.55, blue: 0.95)
+        var lines = store.doc.guides
+        if let preview = store.rulerGuidePreview { lines.append(preview) }
+        guard !lines.isEmpty else { return }
+        var path = Path()
+        for g in lines {
+            let p = store.toScreen(CGPoint(x: g.position, y: g.position))
+            if g.vertical {
+                path.move(to: CGPoint(x: p.x, y: 0)); path.addLine(to: CGPoint(x: p.x, y: size.height))
+            } else {
+                path.move(to: CGPoint(x: 0, y: p.y)); path.addLine(to: CGPoint(x: size.width, y: p.y))
+            }
+        }
+        ctx.stroke(path, with: .color(color.opacity(0.85)), style: StrokeStyle(lineWidth: 1, dash: [6, 3]))
     }
 
     private func drawGuides(_ ctx: inout GraphicsContext) {
@@ -552,7 +609,7 @@ struct CanvasView: View {
         case .select: return .arrow
         case .pan: return .openHand
         case .text: return .iBeam
-        case .rectangle, .ellipse, .diamond, .line, .curve, .connector: return .crosshair
+        case .rectangle, .ellipse, .diamond, .line, .curve, .dimension, .connector: return .crosshair
         }
     }
 
@@ -603,7 +660,8 @@ struct CanvasView: View {
             }
             for (i, p) in pts.enumerated() {
                 let box = CGRect(x: p.x - 4.5, y: p.y - 4.5, width: 9, height: 9)
-                let handle = (s.kind == .curve && i == 1) ? Path(ellipseIn: box) : Path(box)
+                let isControl = (s.kind == .curve && i == 1) || (s.kind == .dimension && i == 2)
+                let handle = isControl ? Path(ellipseIn: box) : Path(box)
                 ctx.fill(handle, with: .color(.white))
                 ctx.stroke(handle, with: .color(accent), lineWidth: 1.5)
             }

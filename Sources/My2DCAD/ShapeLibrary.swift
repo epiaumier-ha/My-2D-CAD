@@ -24,6 +24,8 @@ extension ShapeKind {
         case .text: return "Texte"
         case .line: return "Trait"
         case .curve: return "Courbe"
+        case .dimension: return "Cote"
+        case .freeform: return "Forme libre"
         default: return StencilCatalog.item(for: self)?.name ?? rawValue
         }
     }
@@ -105,6 +107,12 @@ extension ShapeKind {
         case .curve:
             out.stroke.move(to: P(0, 1))
             out.stroke.addQuadCurve(to: P(1, 1), control: P(0.5, -1))
+        case .dimension:
+            line(&out.stroke, P(0, 0.5), P(1, 0.5))
+            line(&out.stroke, P(0, 0.2), P(0, 0.8))
+            line(&out.stroke, P(1, 0.2), P(1, 0.8))
+        case .freeform:
+            out.fill = Path(r)
         case .ellipse:
             out.fill = Path(ellipseIn: r)
         case .diamond:

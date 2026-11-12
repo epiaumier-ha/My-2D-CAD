@@ -84,6 +84,13 @@ enum DiagramIO {
         }
         guard d.name.count <= maxNameLength else { throw DiagramIOError.invalid("nom de page trop long") }
         guard d.layers.count <= maxLayers else { throw DiagramIOError.invalid("trop de calques") }
+        guard d.scale.isFinite, Diagram.scaleRange.contains(d.scale), (0...4).contains(d.precision) else {
+            throw DiagramIOError.invalid("réglages de page invalides")
+        }
+        guard d.guides.count <= Diagram.maxGuides,
+              d.guides.allSatisfy({ $0.position.isFinite && abs($0.position) <= maxCoordinate }) else {
+            throw DiagramIOError.invalid("repères invalides")
+        }
         let layerIDs = Set(d.layers.map(\.id))
         guard layerIDs.count == d.layers.count else { throw DiagramIOError.invalid("identifiants de calques dupliqués") }
         guard d.layers.allSatisfy({ $0.name.count <= maxNameLength }) else {
@@ -108,8 +115,11 @@ enum DiagramIO {
             guard s.points.count <= 16, s.points.allSatisfy({
                 $0.x.isFinite && $0.y.isFinite && abs($0.x) <= maxCoordinate && abs($0.y) <= maxCoordinate
             }) else { throw DiagramIOError.invalid("points invalides") }
+            guard s.segments.count <= Shape.maxSegments, s.segments.allSatisfy({ seg in
+                seg.points.allSatisfy { $0.x.isFinite && $0.y.isFinite && abs($0.x) <= 1000 && abs($0.y) <= 1000 }
+            }) else { throw DiagramIOError.invalid("tracé invalide") }
             if s.kind.isPath {
-                guard s.points.count == (s.kind == .line ? 2 : 3) else {
+                guard s.points.count == s.kind.pointCount else {
                     throw DiagramIOError.invalid("nombre de points incorrect")
                 }
             }

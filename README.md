@@ -21,6 +21,10 @@ Application de dessin 2D inspirée de Microsoft Visio (macOS 14+, Swift 5.9, Swi
 - **Grouper / dissocier** (⌘G / ⇧⌘G) : un clic sélectionne tout le groupe.
 - **Repères d'alignement dynamiques** (Affichage) : alignement des bords et des centres sur les autres formes pendant le déplacement, le dessin et le redimensionnement.
 - **Export** : PDF vectoriel de toutes les pages (⌥⌘E), PNG haute résolution de la page (⇧⌥⌘E), impression (⌘P) ; calques masqués ou non imprimables exclus.
+- **Règles et repères** : règles graduées dans l'unité de la page (mm, cm, m, in, pt) avec échelle 1:N ; glisser depuis une règle crée un repère (les formes s'y calent), le ramener sur la règle le supprime ; Affichage > Règles (⌥⌘R).
+- **Cotes** (outil M) : cote linéaire avec lignes d'attache, flèches et mesure automatique (unité, échelle, décimales de la page) ; poignées pour les extrémités et le décalage.
+- **Connecteurs** : tracé orthogonal qui contourne les formes, droit ou courbe (inspecteur, onglet Style ; défaut par page).
+- **SVG** : export vectoriel de la page ; import (rect, cercle, ellipse, ligne, polyligne, polygone, path complet avec arcs, texte, groupes, transformations, styles) ajouté à la page sous forme d'un groupe.
 - Formes : rectangle, ellipse, losange, texte (clic = taille par défaut, glisser = taille libre).
 - Sélection (clic, Maj+clic, rectangle de sélection), déplacement, redimensionnement par les coins.
 - Connecteurs orthogonaux collés aux points de connexion (haut/droite/bas/gauche) : ils suivent les formes.
@@ -40,6 +44,9 @@ Application de dessin 2D inspirée de Microsoft Visio (macOS 14+, Swift 5.9, Swi
 - `Rendering.swift` : dessin d'une page, partagé par le canevas et l'export.
 - `Export.swift` : PDF, PNG, impression.
 - `PagesLayersGroups.swift` / `PageBar.swift` : pages, calques, groupes et leur interface.
+- `Units.swift` / `Rulers.swift` : unités, règles, repères.
+- `Routing.swift` : connecteurs (A* qui contourne les formes, courbes).
+- `SVG.swift` : export et import SVG.
 - `Guides.swift` : repères d'alignement.
 - `LineStyle.swift` : attributs de trait et leur rendu.
 - `Paths.swift` : traits et courbes (points, échantillonnage, sélection).

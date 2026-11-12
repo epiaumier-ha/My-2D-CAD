@@ -29,7 +29,7 @@ struct ContentView: View {
                 Divider()
             }
             VStack(spacing: 0) {
-                CanvasView()
+                DrawingArea()
                 Divider()
                 PageBar()
                 Divider()
@@ -162,6 +162,9 @@ struct My2DCADApp: App {
                 Button("Exporter en PDF…") { store.exportPDF() }.keyboardShortcut("e", modifiers: [.command, .option])
                 Button("Exporter la page en PNG…") { store.exportPNG() }
                     .keyboardShortcut("e", modifiers: [.command, .option, .shift])
+                Button("Exporter la page en SVG…") { store.exportSVG() }
+                Divider()
+                Button("Importer un SVG…") { store.importSVG() }.keyboardShortcut("i", modifiers: [.command, .shift])
             }
             CommandGroup(replacing: .printItem) {
                 Button("Imprimer…") { store.printDocument() }.keyboardShortcut("p")
@@ -241,6 +244,9 @@ struct My2DCADApp: App {
                 Button("Ajuster à la fenêtre") { store.fitToContent() }.keyboardShortcut("9")
                 Toggle("Magnétisme de la grille", isOn: $store.snapEnabled)
                 Toggle("Repères d'alignement dynamiques", isOn: $store.guidesEnabled)
+                Toggle("Règles", isOn: $store.showRulers).keyboardShortcut("r", modifiers: [.command, .option])
+                Button("Supprimer tous les repères") { store.removeAllGuides() }
+                    .disabled(store.doc.guides.isEmpty)
             }
             CommandMenu("Page") {
                 Button("Nouvelle page") { store.addPage() }.keyboardShortcut("n", modifiers: [.command, .option])

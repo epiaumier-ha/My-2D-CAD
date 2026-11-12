@@ -52,6 +52,12 @@ struct InspectorView: View {
         if let s = store.singleSelectedShape {
             Section("Forme") {
                 LabeledContent("Type", value: s.kind.displayName)
+                if let g = s.dimension {
+                    LabeledContent("Mesure", value: store.doc.formatLength(g.length))
+                    Text("Le texte saisi remplace la mesure ; laissez-le vide pour la mesure automatique.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 TextField("Texte", text: Binding(
                     get: { s.text },
                     set: { v in
@@ -80,6 +86,7 @@ struct InspectorView: View {
             Section("Connecteur") {
                 LabeledContent("De", value: store.shapeLabel(c.fromShape))
                 LabeledContent("Vers", value: store.shapeLabel(c.toShape))
+                LabeledContent("Tracé", value: c.routing.label)
                 Button("Inverser le sens") { store.reverseSelectedConnectors() }
             }
             Section {
@@ -93,8 +100,9 @@ struct InspectorView: View {
                 LabeledContent("Connecteurs", value: "\(store.doc.connectors.count)")
                 LabeledContent("Zoom", value: "\(Int((store.zoom * 100).rounded())) %")
             }
+            pageSection
             Section("Raccourcis") {
-                Text("V sélection · H main · C connecteur · T texte\nR rectangle · E ellipse · D losange · L trait · B courbe\nÉchap : revenir à la sélection")
+                Text("V sélection · H main · C connecteur · T texte\nR rectangle · E ellipse · D losange · L trait · B courbe · M cote\nÉchap : revenir à la sélection")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -116,6 +124,40 @@ struct InspectorView: View {
                 ForEach(store.doc.layers) { l in
                     Text(l.name).tag(UUID?.some(l.id))
                 }
+            }
+        }
+    }
+
+    /// Réglages de la page : unité, échelle, décimales, connecteurs, repères.
+    private var pageSection: some View {
+        let d = store.doc
+        return Section("Page « \(d.name) »") {
+            Picker("Unité", selection: Binding(
+                get: { d.unit },
+                set: { v in store.updatePageSettings { $0.unit = v } })) {
+                ForEach(MeasureUnit.allCases) { Text($0.label).tag($0) }
+            }
+            LabeledContent("Échelle") {
+                HStack(spacing: 4) {
+                    Text("1 :")
+                    TextField("Échelle", value: Binding(
+                        get: { d.scale },
+                        set: { v in store.updatePageSettings { $0.scale = v } }),
+                              format: .number.precision(.fractionLength(0...3)))
+                        .frame(width: 80)
+                }
+            }
+            Stepper("Décimales : \(d.precision)", value: Binding(
+                get: { d.precision },
+                set: { v in store.updatePageSettings { $0.precision = v } }), in: 0...4)
+            Picker("Nouveaux connecteurs", selection: Binding(
+                get: { d.defaultRouting },
+                set: { v in store.updatePageSettings { $0.defaultRouting = v } })) {
+                ForEach(ConnectorRouting.allCases) { Text($0.label).tag($0) }
+            }
+            if !d.guides.isEmpty {
+                LabeledContent("Repères", value: "\(d.guides.count)")
+                Button("Supprimer tous les repères") { store.removeAllGuides() }
             }
         }
     }
@@ -150,6 +192,18 @@ struct InspectorView: View {
                         store.editSelection(key: "fillTransparency", shapes: { if $0.supportsFill { $0.fillTransparency = v } })
                     }
                 }
+            }
+        }
+        if let c = selectedConnectors.first {
+            Section("Connecteur") {
+                Picker("Tracé", selection: Binding(
+                    get: { c.routing },
+                    set: { v in store.editSelection(key: "routing", connectors: { $0.routing = v }) })) {
+                    ForEach(ConnectorRouting.allCases) { Text($0.label).tag($0) }
+                }
+                Text("Orthogonal : contourne les formes. Droit et courbe : vont directement d'une forme à l'autre.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         if let style = store.selectionLineStyle {

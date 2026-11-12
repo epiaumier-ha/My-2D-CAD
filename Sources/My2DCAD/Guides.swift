@@ -18,12 +18,20 @@ struct AlignmentSnap {
 
 /// Cherche un alignement des bords ou du centre de `moving` avec ceux des rectangles `targets`,
 /// à moins de `tolerance`. Un point se traite comme un rectangle de taille nulle.
-func alignmentSnap(moving: CGRect, targets: [CGRect], tolerance: CGFloat) -> AlignmentSnap {
+func alignmentSnap(moving: CGRect, targets: [CGRect], tolerance: CGFloat,
+                    verticalLines: [CGFloat] = [], horizontalLines: [CGFloat] = []) -> AlignmentSnap {
     func xs(_ r: CGRect) -> [CGFloat] { [r.minX, r.midX, r.maxX] }
     func ys(_ r: CGRect) -> [CGFloat] { [r.minY, r.midY, r.maxY] }
 
-    func best(_ own: [CGFloat], _ others: (CGRect) -> [CGFloat]) -> CGFloat? {
+    func best(_ own: [CGFloat], _ others: (CGRect) -> [CGFloat], lines: [CGFloat]) -> CGFloat? {
         var result: CGFloat?
+        // Repères tirés des règles : bords et centre de la forme s'y calent.
+        for v in lines {
+            for o in own {
+                let d = v - o
+                if abs(d) <= tolerance && (result == nil || abs(d) < abs(result!)) { result = d }
+            }
+        }
         for t in targets {
             for v in others(t) {
                 for o in own {
@@ -36,8 +44,8 @@ func alignmentSnap(moving: CGRect, targets: [CGRect], tolerance: CGFloat) -> Ali
     }
 
     var snap = AlignmentSnap()
-    snap.dx = best(xs(moving), xs)
-    snap.dy = best(ys(moving), ys)
+    snap.dx = best(xs(moving), xs, lines: verticalLines)
+    snap.dy = best(ys(moving), ys, lines: horizontalLines)
     let final = moving.offsetBy(dx: snap.dx ?? 0, dy: snap.dy ?? 0)
 
     // Repères : une ligne par position alignée, étendue à toutes les formes concernées.
