@@ -232,9 +232,14 @@ struct My2DCADApp: App {
                 Button("Inverser le sens du connecteur") { store.reverseSelectedConnectors() }
             }
             CommandMenu("Outils") {
+                // ⌘1 à ⌘9 pour les neuf premiers outils ; les suivants n'ont que leur lettre.
                 ForEach(Array(Tool.allCases.enumerated()), id: \.element) { index, tool in
-                    Button(tool.labelWithShortcut) { store.tool = tool }
-                        .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+                    if index < 9 {
+                        Button(tool.labelWithShortcut) { store.tool = tool }
+                            .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+                    } else {
+                        Button(tool.labelWithShortcut) { store.tool = tool }
+                    }
                 }
             }
             CommandMenu("Affichage") {
