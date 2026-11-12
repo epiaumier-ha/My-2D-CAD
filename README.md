@@ -25,6 +25,7 @@ Application de dessin 2D inspirée de Microsoft Visio (macOS 14+, Swift 5.9, Swi
 - **Cotes** (outil M) : cote linéaire avec lignes d'attache, flèches et mesure automatique (unité, échelle, décimales de la page) ; poignées pour les extrémités et le décalage.
 - **Connecteurs** : tracé orthogonal qui contourne les formes, droit ou courbe (inspecteur, onglet Style ; défaut par page).
 - **SVG** : export vectoriel de la page ; import (rect, cercle, ellipse, ligne, polyligne, polygone, path complet avec arcs, texte, groupes, transformations, styles) ajouté à la page sous forme d'un groupe.
+- **Bloc de texte** (comme l'outil Bloc de texte de Visio) : poignée jaune pour placer le texte n'importe où (Maj : axe), poignées vertes pour sa largeur ; réglages précis dans l'onglet Texte ; un clic sur le texte sélectionne la forme.
 - Formes : rectangle, ellipse, losange, texte (clic = taille par défaut, glisser = taille libre).
 - Sélection (clic, Maj+clic, rectangle de sélection), déplacement, redimensionnement par les coins.
 - Connecteurs orthogonaux collés aux points de connexion (haut/droite/bas/gauche) : ils suivent les formes.
@@ -47,6 +48,7 @@ Application de dessin 2D inspirée de Microsoft Visio (macOS 14+, Swift 5.9, Swi
 - `Units.swift` / `Rulers.swift` : unités, règles, repères.
 - `Routing.swift` : connecteurs (A* qui contourne les formes, courbes).
 - `SVG.swift` : export et import SVG.
+- `TextBlock.swift` : position et largeur du bloc de texte.
 - `Guides.swift` : repères d'alignement.
 - `LineStyle.swift` : attributs de trait et leur rendu.
 - `Paths.swift` : traits et courbes (points, échantillonnage, sélection).

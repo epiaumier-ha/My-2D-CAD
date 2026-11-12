@@ -332,9 +332,53 @@ struct InspectorView: View {
                 }
                 .pickerStyle(.segmented)
             }
+            if store.selectedShapes.count == 1 { textBlockSection(first) }
         } else {
             placeholder("Sélectionnez une ou plusieurs formes pour mettre leur texte en forme.")
         }
+    }
+
+    /// Bloc de texte : position (décalage) et largeur, comme l'« Outil Bloc de texte » de Visio.
+    private func textBlockSection(_ s: Shape) -> some View {
+        let d = store.doc
+        return Section("Bloc de texte") {
+            offsetField("Décalage X", value: s.textOffset.x) { $0.textOffset.x = $1 }
+            offsetField("Décalage Y", value: s.textOffset.y) { $0.textOffset.y = $1 }
+            if s.supportsTextBlockWidth {
+                Toggle("Largeur automatique", isOn: Binding(
+                    get: { s.textBlockWidth == nil },
+                    set: { auto in
+                        let current = Double(s.textBlockWidthValue)
+                        store.editSelectedShape(key: "textWidthAuto") { $0.textBlockWidth = auto ? nil : current }
+                    }))
+                if s.textBlockWidth != nil {
+                    TextField("Largeur (\(d.unit.symbol))", value: Binding<Double>(
+                        get: { d.measure(s.textBlockWidthValue) },
+                        set: { v in
+                            let world = Double(d.worldLength(forMeasure: v))
+                            guard world.isFinite else { return }
+                            let clamped = min(max(world, Shape.textBlockWidthRange.lowerBound), Shape.textBlockWidthRange.upperBound)
+                            store.editSelectedShape(key: "textWidth") { $0.textBlockWidth = clamped }
+                        }), format: .number.precision(.fractionLength(0...max(d.precision, 1))))
+                }
+            }
+            Button("Rétablir la position par défaut") { store.resetTextBlocks() }
+                .disabled(!s.hasCustomTextBlock)
+            Text("Sur le dessin : poignée jaune pour déplacer le texte (Maj : horizontal ou vertical), poignées vertes pour sa largeur.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func offsetField(_ label: String, value: CGFloat, apply: @escaping (inout Shape, CGFloat) -> Void) -> some View {
+        let d = store.doc
+        return TextField("\(label) (\(d.unit.symbol))", value: Binding<Double>(
+            get: { d.measure(value) },
+            set: { v in
+                let world = d.worldLength(forMeasure: v)
+                guard world.isFinite, abs(world) <= DiagramIO.maxCoordinate / 2 else { return }
+                store.editSelectedShape(key: label) { apply(&$0, world) }
+            }), format: .number.precision(.fractionLength(0...max(d.precision, 1))))
     }
 
     // MARK: - Onglet Organiser

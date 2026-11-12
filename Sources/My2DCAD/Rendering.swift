@@ -128,7 +128,8 @@ struct DiagramPainter {
         }
         guard !s.text.isEmpty, editingShapeID != s.id,
               let label = ctx.resolveSymbol(id: s.id) else { return }
-        ctx.draw(label, at: toScreen(s.pathMidpoint), anchor: .center)
+        let m = s.pathMidpoint
+        ctx.draw(label, at: toScreen(CGPoint(x: m.x + s.textOffset.x, y: m.y + s.textOffset.y)), anchor: .center)
     }
 
     func drawShape(_ s: Shape, in ctx: inout GraphicsContext) {
@@ -153,10 +154,12 @@ struct DiagramPainter {
         var textContext = ctx
         textContext.translateBy(x: r.midX, y: r.midY)
         if s.rotation != 0 { textContext.rotate(by: .radians(Double(s.angle))) }
+        // Bloc de texte éventuellement déplacé (décalage dans le repère de la forme).
+        let off = CGPoint(x: s.textOffset.x * zoom, y: s.textOffset.y * zoom)
         if s.kind.labelPlacement == .below {
-            textContext.draw(label, at: CGPoint(x: 0, y: r.height / 2 + 4), anchor: .top)
+            textContext.draw(label, at: CGPoint(x: off.x, y: r.height / 2 + 4 * zoom + off.y), anchor: .top)
         } else {
-            textContext.draw(label, at: .zero, anchor: .center)
+            textContext.draw(label, at: off, anchor: .center)
         }
     }
 
@@ -183,7 +186,8 @@ struct DiagramPainter {
                 .background(Color(nsColor: .textBackgroundColor))
         } else {
             let below = s.kind.labelPlacement == .below
-            let width = below ? max(r.width * 2, 120 * zoom) : max(r.width - 8 * zoom, 20)
+            let width = s.textBlockWidth != nil ? s.textBlockWidthValue * zoom
+                : (below ? max(r.width * 2, 120 * zoom) : max(r.width - 8 * zoom, 20))
             text
                 .multilineTextAlignment(ts.alignment.textAlignment)
                 .frame(width: width, alignment: ts.alignment.frameAlignment)
@@ -270,7 +274,7 @@ struct DiagramPainter {
         var tc = ctx
         tc.translateBy(x: (a2.x + b2.x) / 2, y: (a2.y + b2.y) / 2)
         tc.rotate(by: .radians(Double(Self.readableAngle(a2, b2))))
-        tc.draw(label, at: CGPoint(x: 0, y: -2 * zoom), anchor: .bottom)
+        tc.draw(label, at: CGPoint(x: s.textOffset.x * zoom, y: (s.textOffset.y - 2) * zoom), anchor: .bottom)
     }
 
 }

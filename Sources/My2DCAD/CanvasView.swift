@@ -30,6 +30,10 @@ private enum Interaction {
     case resizing(original: Shape, handle: Handle)
     case editingPoint(id: UUID, index: Int)
     case movingGuide(id: UUID)
+    /// Déplacement du bloc de texte (poignée jaune) : décalage d'origine, point de départ, angle du repère du texte.
+    case movingText(id: UUID, original: CGPoint, start: CGPoint, angle: CGFloat)
+    /// Largeur du bloc de texte (poignées latérales).
+    case resizingText(id: UUID, frame: TextFrame)
     case reconnecting(id: UUID, start: Bool, current: CGPoint)
     case rotating(original: Shape, startAngle: CGFloat)
     case drawing(kind: ShapeKind, start: CGPoint, current: CGPoint)
@@ -119,10 +123,11 @@ struct CanvasView: View {
         if let id = store.editingShapeID, let s = store.doc.shape(id) {
             let r = store.toScreen(s.rect)
             let below = s.kind.labelPlacement == .below
-            let width = below ? max(r.width * 2, 140) : max(r.width - 8, 100)
-            let center = s.kind.isPath
-                ? store.toScreen(s.pathMidpoint)
-                : (below ? CGPoint(x: r.midX, y: r.maxY + 16 * store.zoom) : CGPoint(x: r.midX, y: r.midY))
+            let width = s.textBlockWidth != nil ? max(s.textBlockWidthValue * store.zoom, 60)
+                : (below ? max(r.width * 2, 140) : max(r.width - 8, 100))
+            // Éditeur posé sur le bloc de texte (éventuellement déplacé).
+            let tf = s.textFrame(content: store.editingText.isEmpty ? " " : store.editingText)
+            let center = store.toScreen(tf.toWorld(CGPoint(x: tf.local.midX, y: tf.local.midY)))
             let ts = s.textStyle
             TextField("Texte", text: $store.editingText, axis: .vertical)
                 .textFieldStyle(.plain)
@@ -244,6 +249,18 @@ struct CanvasView: View {
                     return
                 }
             }
+            // Bloc de texte de la forme sélectionnée : poignée jaune (déplacer) et poignées latérales (largeur).
+            if let s = store.singleSelectedShape, let tf = store.doc.textFrame(s) {
+                if store.toScreen(tf.moveHandle).distance(to: screen) <= 7 {
+                    interaction = .movingText(id: s.id, original: s.textOffset, start: w, angle: tf.angle)
+                    return
+                }
+                if s.supportsTextBlockWidth,
+                   [tf.leftHandle, tf.rightHandle].contains(where: { store.toScreen($0).distance(to: screen) <= 6 }) {
+                    interaction = .resizingText(id: s.id, frame: tf)
+                    return
+                }
+            }
             if let s = store.hitShape(at: w) {
                 let now = ProcessInfo.processInfo.systemUptime
                 if !additive, let last = lastClick, last.id == s.id, now - last.time <= NSEvent.doubleClickInterval {
@@ -360,6 +377,23 @@ struct CanvasView: View {
                 pts[index] = q
                 store.doc.shapes[i].setWorldPoints(pts)
             }
+
+        case .movingText(let id, let original, let start, let angle):
+            guard let i = shapeIndex(id) else { return }
+            var dx = w.x - start.x, dy = w.y - start.y
+            // Maj : déplacement horizontal ou vertical uniquement.
+            if NSEvent.modifierFlags.contains(.shift) { if abs(dx) > abs(dy) { dy = 0 } else { dx = 0 } }
+            // Le décalage est exprimé dans le repère du texte (il suit la rotation de la forme).
+            let lx = dx * cos(angle) + dy * sin(angle), ly = -dx * sin(angle) + dy * cos(angle)
+            store.doc.shapes[i].textOffset = CGPoint(x: ((original.x + lx) * 10).rounded() / 10,
+                                                     y: ((original.y + ly) * 10).rounded() / 10)
+
+        case .resizingText(let id, let frame):
+            guard let i = shapeIndex(id) else { return }
+            let local = frame.toLocal(w)
+            let width = min(max(abs(local.x - frame.local.midX) * 2, CGFloat(Shape.textBlockWidthRange.lowerBound)),
+                            CGFloat(Shape.textBlockWidthRange.upperBound))
+            store.doc.shapes[i].textBlockWidth = Double(width.rounded())
 
         case .movingGuide(let id):
             guard let gi = store.doc.guides.firstIndex(where: { $0.id == id }) else { return }
@@ -601,6 +635,7 @@ struct CanvasView: View {
                 store.startTextEditing(id)
             }
         }
+        Button("Rétablir la position du texte") { store.resetTextBlocks() }
         Divider()
         ForEach(StackingOrder.allCases, id: \.self) { order in
             Button(order.label) { store.reorderSelection(order) }
@@ -655,6 +690,28 @@ struct CanvasView: View {
             }
         }
         guard let s = store.singleSelectedShape else { return }
+
+        // Bloc de texte : cadre en pointillés, poignée jaune de déplacement, poignées de largeur.
+        if let tf = store.doc.textFrame(s) {
+            var frame = Path()
+            frame.addLines(tf.corners.map { store.toScreen($0) })
+            frame.closeSubpath()
+            ctx.stroke(frame, with: .color(Color.green.opacity(0.8)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            let h = store.toScreen(tf.moveHandle)
+            var diamond = Path()
+            diamond.addLines([CGPoint(x: h.x, y: h.y - 6), CGPoint(x: h.x + 6, y: h.y),
+                              CGPoint(x: h.x, y: h.y + 6), CGPoint(x: h.x - 6, y: h.y)])
+            diamond.closeSubpath()
+            ctx.fill(diamond, with: .color(Color(red: 1, green: 0.84, blue: 0.1)))
+            ctx.stroke(diamond, with: .color(Color(white: 0.25)), lineWidth: 1)
+            if s.supportsTextBlockWidth {
+                for p in [tf.leftHandle, tf.rightHandle].map({ store.toScreen($0) }) {
+                    let box = CGRect(x: p.x - 3.5, y: p.y - 3.5, width: 7, height: 7)
+                    ctx.fill(Path(box), with: .color(.white))
+                    ctx.stroke(Path(box), with: .color(.green), lineWidth: 1.2)
+                }
+            }
+        }
 
         if s.kind.isPath {
             let pts = s.worldPoints.map { store.toScreen($0) }

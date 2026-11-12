@@ -936,3 +936,65 @@ final class RevisionTwoTests: XCTestCase {
         XCTAssertEqual(after.y, centre.y, accuracy: 1e-6)
     }
 }
+
+@MainActor
+final class TextBlockTests: XCTestCase {
+    func testDefaultFrameAndOffset() {
+        var s = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 120, height: 60), text: "Bonjour")
+        var f = s.textFrame(content: s.text)
+        XCTAssertEqual(f.anchor, CGPoint(x: 60, y: 30), "par défaut : centre de la forme")
+        XCTAssertEqual(f.local.width, 112, "largeur automatique : forme moins 8")
+        s.textOffset = CGPoint(x: 100, y: -50)
+        s.textBlockWidth = 200
+        f = s.textFrame(content: s.text)
+        XCTAssertEqual(f.anchor, CGPoint(x: 160, y: -20))
+        XCTAssertEqual(f.local.width, 200)
+        XCTAssertTrue(s.hasCustomTextBlock)
+    }
+
+    func testOffsetFollowsRotation() {
+        var s = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 100, height: 40), text: "A", rotation: 90)
+        s.textOffset = CGPoint(x: 30, y: 0)   // à droite dans le repère de la forme
+        let a = s.textFrame(content: "A").anchor
+        XCTAssertEqual(a.x, 50, accuracy: 1e-6)
+        XCTAssertEqual(a.y, 50, accuracy: 1e-6, "pivotée de 90° : la droite de la forme est vers le bas")
+    }
+
+    func testClickOnMovedTextSelectsShape() {
+        let store = DocumentStore()
+        var s = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 120, height: 60), text: "Étiquette")
+        s.textOffset = CGPoint(x: 300, y: 0)
+        store.perform { $0.shapes = [s] }
+        XCTAssertEqual(store.hitShape(at: CGPoint(x: 360, y: 30))?.id, s.id, "clic sur le texte déplacé")
+        XCTAssertNil(store.hitShape(at: CGPoint(x: 360, y: 200)))
+        store.selection = [s.id]
+        store.resetTextBlocks()
+        XCTAssertFalse(store.doc.shapes[0].hasCustomTextBlock)
+        store.undo()
+        XCTAssertEqual(store.doc.shapes[0].textOffset, CGPoint(x: 300, y: 0))
+    }
+
+    func testTextBlockPersistenceAndValidation() throws {
+        var s = Shape(kind: .ellipse, rect: CGRect(x: 0, y: 0, width: 50, height: 50), text: "X")
+        s.textOffset = CGPoint(x: 12.5, y: -40)
+        s.textBlockWidth = 150
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("tb-\(UUID().uuidString).cad2d")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try DiagramIO.save(Diagram(shapes: [s]), to: url)
+        XCTAssertEqual(try DiagramIO.load(from: url).pages[0].shapes[0], s)
+        var bad = s
+        bad.textBlockWidth = 0
+        XCTAssertThrowsError(try DiagramIO.validate(Diagram(shapes: [bad])))
+        bad = s
+        bad.textOffset = CGPoint(x: CGFloat.nan, y: 0)
+        XCTAssertThrowsError(try DiagramIO.validate(Diagram(shapes: [bad])))
+    }
+
+    func testExportIncludesMovedText() {
+        var s = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 100, height: 50), text: "Loin")
+        s.textOffset = CGPoint(x: 0, y: 200)
+        let bounds = DiagramExporter.contentBounds(Diagram(shapes: [s]))!
+        XCTAssertGreaterThan(bounds.maxY, 220, "le texte déplacé est dans la zone exportée")
+        XCTAssertTrue(SVGExporter.svg(for: Diagram(shapes: [s])).contains("Loin"))
+    }
+}

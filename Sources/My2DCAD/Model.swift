@@ -66,10 +66,14 @@ struct Shape: Identifiable, Codable, Equatable {
     var groupID: UUID?
     /// Tracé d'une forme libre, en coordonnées relatives au rectangle (0…1).
     var segments: [PathSegment] = []
+    /// Décalage du bloc de texte par rapport à sa position par défaut (repère de la forme, unités du dessin).
+    var textOffset: CGPoint = .zero
+    /// Largeur personnalisée du bloc de texte (nil : automatique).
+    var textBlockWidth: Double?
 
     enum CodingKeys: String, CodingKey {
         case id, kind, rect, text, fill, rotation, points, line, textStyle, noFill, fillTransparency, layerID, groupID
-        case segments
+        case segments, textOffset, textBlockWidth
     }
 
     /// Couleur de remplissage effective (nil si aucun remplissage).
@@ -101,6 +105,8 @@ extension Shape {
         layerID = try c.decodeIfPresent(UUID.self, forKey: .layerID)
         groupID = try c.decodeIfPresent(UUID.self, forKey: .groupID)
         segments = try c.decodeIfPresent([PathSegment].self, forKey: .segments) ?? []
+        textOffset = try c.decodeIfPresent(CGPoint.self, forKey: .textOffset) ?? .zero
+        textBlockWidth = try c.decodeIfPresent(Double.self, forKey: .textBlockWidth)
     }
 }
 

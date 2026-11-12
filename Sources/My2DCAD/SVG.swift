@@ -64,7 +64,7 @@ enum SVGExporter {
             let angle = DiagramPainter.readableAngle(g.a2, g.b2) * 180 / .pi
             out += "<g transform=\"rotate(\(n(angle)) \(n(mid.x)) \(n(mid.y)))\">"
             out += textElement(painter.dimensionText(s), style: s.textStyle, anchor: "middle",
-                               x: mid.x, firstBaseline: mid.y - 3)
+                               x: mid.x + s.textOffset.x, firstBaseline: mid.y - 3 + s.textOffset.y)
             out += "</g>\n"
             return out
         }
@@ -78,8 +78,8 @@ enum SVGExporter {
             }
             if !s.text.isEmpty {
                 let mid = s.pathMidpoint
-                out += textElement(s.text, style: s.textStyle, anchor: "middle", x: mid.x,
-                                   firstBaseline: mid.y - CGFloat(s.textStyle.size) * 0.3)
+                out += textElement(s.text, style: s.textStyle, anchor: "middle", x: mid.x + s.textOffset.x,
+                                   firstBaseline: mid.y + s.textOffset.y - CGFloat(s.textStyle.size) * 0.3)
             }
             return out
         }
@@ -97,18 +97,21 @@ enum SVGExporter {
             let ts = s.textStyle
             let size = CGFloat(ts.size)
             let lines = CGFloat(s.text.split(separator: "\n", omittingEmptySubsequences: false).count)
+            let off = s.textOffset
             if s.kind.labelPlacement == .below {
-                out += textElement(s.text, style: ts, anchor: "middle", x: r.midX, firstBaseline: r.maxY + 4 + size * 0.9)
+                out += textElement(s.text, style: ts, anchor: "middle", x: r.midX + off.x,
+                                   firstBaseline: r.maxY + 4 + size * 0.9 + off.y)
             } else {
+                let half = s.textBlockWidthValue / 2
                 let (anchor, x): (String, CGFloat) = {
                     switch ts.alignment {
-                    case .left: return ("start", r.minX + 4)
+                    case .left: return ("start", r.midX - half)
                     case .center: return ("middle", r.midX)
-                    case .right: return ("end", r.maxX - 4)
+                    case .right: return ("end", r.midX + half)
                     }
                 }()
                 let first = r.midY - (lines - 1) * size * 0.6 + size * 0.35
-                out += textElement(s.text, style: ts, anchor: anchor, x: x, firstBaseline: first)
+                out += textElement(s.text, style: ts, anchor: anchor, x: x + off.x, firstBaseline: first + off.y)
             }
         }
         out += "</g>\n"

@@ -376,10 +376,16 @@ final class DocumentStore: ObservableObject {
     func hitShape(at world: CGPoint, includePaths: Bool = true) -> Shape? {
         let tolerance = 6 / zoom
         let d = doc
-        return d.shapes.last { s in
+        let direct = d.shapes.last { s in
             guard d.isSelectable(s) else { return false }
             if s.kind.isPath { return includePaths && s.distanceToPath(world) <= tolerance }
             return s.contains(world)
+        }
+        if let direct { return direct }
+        // Un clic sur le texte d'une forme (déplacé, ou sous une icône) sélectionne la forme.
+        return d.shapes.last { s in
+            guard d.isSelectable(s), includePaths || !s.kind.isPath, !s.text.isEmpty || s.kind == .dimension else { return false }
+            return d.textFrame(s)?.contains(world, margin: 2) ?? false
         }
     }
 

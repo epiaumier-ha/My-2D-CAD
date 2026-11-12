@@ -29,10 +29,8 @@ enum DiagramExporter {
         var bounds: CGRect?
         for s in page.shapes where painter.isDrawn(s) {
             var b = s.bounds
-            if s.kind.labelPlacement == .below && !s.text.isEmpty {
-                // Libellé sous l'icône : place pour une ou deux lignes, sur deux largeurs.
-                b = b.union(CGRect(x: b.midX - b.width, y: b.maxY, width: b.width * 2, height: CGFloat(s.textStyle.size) * 3))
-            }
+            // Bloc de texte (éventuellement déplacé hors de la forme).
+            if !s.text.isEmpty || s.kind == .dimension, let tf = page.textFrame(s) { b = b.union(tf.bounds) }
             bounds = bounds.map { $0.union(b) } ?? b
         }
         for c in page.connectors where painter.isDrawn(c) {

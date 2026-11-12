@@ -123,6 +123,11 @@ enum DiagramIO {
                     throw DiagramIOError.invalid("nombre de points incorrect")
                 }
             }
+            guard s.textOffset.x.isFinite, s.textOffset.y.isFinite,
+                  abs(s.textOffset.x) <= maxCoordinate, abs(s.textOffset.y) <= maxCoordinate,
+                  s.textBlockWidth.map({ $0.isFinite && Shape.textBlockWidthRange.contains($0) }) ?? true else {
+                throw DiagramIOError.invalid("bloc de texte invalide")
+            }
             guard s.textStyle.isValid else { throw DiagramIOError.invalid("style de texte invalide") }
             guard s.fillTransparency.isFinite, (0...1).contains(s.fillTransparency) else {
                 throw DiagramIOError.invalid("transparence invalide")
