@@ -657,7 +657,6 @@ struct CanvasView: View {
 
     // MARK: - Menu contextuel et curseurs
 
-    @ViewBuilder
     /// Menu contextuel adapté à ce qui est sous le pointeur, avec les mêmes libellés que les menus.
     @ViewBuilder
     private var canvasContextMenu: some View {
