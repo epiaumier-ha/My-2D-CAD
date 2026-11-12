@@ -150,6 +150,8 @@ final class DocumentStore: ObservableObject {
     let pointer = PointerTracker()
     /// L'utilisateur a déjà confirmé la fermeture (évite une seconde question en quittant).
     var closeConfirmed = false
+    /// Outil à reprendre quand la barre d'espace est relâchée (déplacement temporaire de la vue).
+    var toolBeforeSpacePan: Tool?
 
     static let fileType = UTType(filenameExtension: "cad2d", conformingTo: .json) ?? .json
 
@@ -384,8 +386,9 @@ final class DocumentStore: ObservableObject {
     func hitConnector(at world: CGPoint) -> Connector? {
         let tolerance = 6 / zoom
         let d = doc
+        let context = RoutingContext(d)
         return d.connectors.last { c in
-            guard d.isVisible(c), let pts = d.connectorPoints(c), pts.count > 1 else { return false }
+            guard d.isVisible(c), let pts = d.connectorPoints(c, context: context), pts.count > 1 else { return false }
             for i in 0..<(pts.count - 1)
             where distanceFromPoint(world, toSegment: pts[i], pts[i + 1]) <= tolerance {
                 return true
@@ -527,7 +530,7 @@ final class DocumentStore: ObservableObject {
 
     func installEventMonitor() {
         guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify, .keyDown, .rightMouseDown]) { [weak self] event in
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify, .keyDown, .keyUp, .rightMouseDown]) { [weak self] event in
             guard let self else { return event }
             // Le moniteur local est toujours appelé sur le thread principal ; NSEvent n'est pas
             // Sendable, on le fait donc passer dans une boîte explicitement non vérifiée.
@@ -567,11 +570,28 @@ final class DocumentStore: ObservableObject {
                 offset = CGSize(width: offset.width + dx, height: offset.height + dy)
             }
             return nil
+        case .keyUp:
+            // Fin du déplacement temporaire avec Espace : retour à l'outil précédent.
+            if e.keyCode == 49, let previous = toolBeforeSpacePan {
+                toolBeforeSpacePan = nil
+                tool = previous
+                return nil
+            }
+            return e
         case .keyDown:
             if NSApp.keyWindow?.firstResponder is NSText { return e }
             if !e.modifierFlags.intersection([.command, .control]).isEmpty { return e }
-            let step = e.modifierFlags.contains(.option) ? 1 : gridSize
+            // Flèches : un pas de grille (1 pt sans magnétisme ou avec ⌥) ; ⇧ : 5 pas.
+            var step: CGFloat = e.modifierFlags.contains(.option) || !snapEnabled ? 1 : gridSize
+            if e.modifierFlags.contains(.shift) { step *= 5 }
             switch e.keyCode {
+            case 49:
+                // Espace maintenu : outil Main temporaire (comme dans les logiciels de dessin).
+                if toolBeforeSpacePan == nil && tool != .pan && editingShapeID == nil {
+                    toolBeforeSpacePan = tool
+                    tool = .pan
+                }
+                return nil
             case 51, 117:
                 guard !selection.isEmpty else { return e }
                 deleteSelection(); return nil

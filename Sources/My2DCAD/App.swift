@@ -149,7 +149,7 @@ struct My2DCADApp: App {
         Window("My2DCAD", id: "main") {
             ContentView()
                 .environmentObject(store)
-                .frame(minWidth: 900, minHeight: 600)
+                .frame(minWidth: 1050, minHeight: 640)
         }
         .commands {
             CommandGroup(replacing: .newItem) {
@@ -245,7 +245,8 @@ struct My2DCADApp: App {
             CommandMenu("Affichage") {
                 Button("Zoom avant") { store.zoom(by: 1.25) }.keyboardShortcut("+")
                 Button("Zoom arrière") { store.zoom(by: 0.8) }.keyboardShortcut("-")
-                Button("Zoom 100 %") { store.resetView() }.keyboardShortcut("0")
+                Button("Zoom 100 %") { store.setZoom(1) }.keyboardShortcut("0")
+                Button("Revenir à l'origine") { store.resetView() }
                 Button("Ajuster à la fenêtre") { store.fitToContent() }.keyboardShortcut("9")
                 Toggle("Magnétisme de la grille", isOn: $store.snapEnabled)
                 Toggle("Repères d'alignement dynamiques", isOn: $store.guidesEnabled)

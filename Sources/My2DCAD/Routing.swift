@@ -16,10 +16,39 @@ enum ConnectorRouting: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// Index des formes par identifiant et obstacles de routage d'une page, calculés une seule fois
+/// pour tracer ou tester tous les connecteurs (au lieu d'une recherche linéaire par connecteur).
+struct RoutingContext {
+    let byID: [UUID: Shape]
+    let obstacles: [CGRect]
+
+    init(_ d: Diagram) {
+        byID = Dictionary(d.shapes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        obstacles = d.shapes.filter { !$0.kind.isPath && d.isVisible($0) }.map(\.bounds)
+    }
+
+    /// Obstacles proches du segment a–b (au plus 40).
+    func obstacles(near a: CGPoint, _ b: CGPoint) -> [CGRect] {
+        let zone = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
+            .insetBy(dx: -150, dy: -150)
+        var result: [CGRect] = []
+        for r in obstacles where r.intersects(zone) {
+            result.append(r)
+            if result.count >= 40 { break }
+        }
+        return result
+    }
+}
+
 extension Diagram {
     /// Tracé d'un connecteur (polyligne en coordonnées monde ; une courbe est échantillonnée).
     func connectorPoints(_ c: Connector) -> [CGPoint]? {
-        guard let a = shape(c.fromShape), let b = shape(c.toShape) else { return nil }
+        connectorPoints(c, context: RoutingContext(self))
+    }
+
+    /// Même tracé, avec un contexte partagé entre plusieurs connecteurs.
+    func connectorPoints(_ c: Connector, context: RoutingContext) -> [CGPoint]? {
+        guard let a = context.byID[c.fromShape], let b = context.byID[c.toShape] else { return nil }
         let pa = a.portPoint(c.fromPort), pb = b.portPoint(c.toPort)
         let da = a.portDirection(c.fromPort), db = b.portDirection(c.toPort)
         switch c.routing {
@@ -28,21 +57,8 @@ extension Diagram {
         case .curved:
             return curvedConnector(from: pa, dirA: da, to: pb, dirB: db)
         case .orthogonal:
-            return orthogonalRoute(from: pa, dirA: da, to: pb, dirB: db, obstacles: routingObstacles(near: pa, pb))
+            return orthogonalRoute(from: pa, dirA: da, to: pb, dirB: db, obstacles: context.obstacles(near: pa, pb))
         }
-    }
-
-    /// Formes à contourner : visibles, hors traits, courbes et cotes, proches des deux extrémités.
-    func routingObstacles(near a: CGPoint, _ b: CGPoint) -> [CGRect] {
-        let zone = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(a.x - b.x), height: abs(a.y - b.y))
-            .insetBy(dx: -150, dy: -150)
-        var result: [CGRect] = []
-        for s in shapes where !s.kind.isPath && isVisible(s) {
-            let r = s.bounds
-            if r.intersects(zone) { result.append(r) }
-            if result.count >= 40 { break }
-        }
-        return result
     }
 }
 

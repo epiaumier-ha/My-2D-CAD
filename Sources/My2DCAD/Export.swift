@@ -36,7 +36,7 @@ enum DiagramExporter {
             bounds = bounds.map { $0.union(b) } ?? b
         }
         for c in page.connectors where painter.isDrawn(c) {
-            for p in page.connectorPoints(c) ?? [] {
+            for p in page.connectorPoints(c, context: painter.routing) ?? [] {
                 let r = CGRect(origin: p, size: .zero)
                 bounds = bounds.map { $0.union(r) } ?? r
             }

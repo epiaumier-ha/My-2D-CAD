@@ -12,7 +12,9 @@ struct StatusBar: View {
             Text(pointerText).monospacedDigit().frame(minWidth: 130, alignment: .leading)
             Divider().frame(height: 12)
             Text(selectionText).lineLimit(1)
-            Spacer()
+            Spacer(minLength: 8)
+            Text(hint).lineLimit(1).truncationMode(.tail)
+            Spacer(minLength: 8)
             if store.snapEnabled {
                 Label("Grille \(Int(store.gridSize))", systemImage: "squareshape.split.2x2.dotted")
             }
@@ -23,6 +25,20 @@ struct StatusBar: View {
         .padding(.horizontal, 10)
         .frame(height: 24)
         .background(.bar)
+    }
+
+    /// Aide contextuelle selon l'outil (raccourcis utiles).
+    private var hint: String {
+        switch store.tool {
+        case .select:
+            return "Double-clic : texte · ⌥-glisser : dupliquer · Maj : ajouter à la sélection · Espace : déplacer la vue"
+        case .pan: return "Glisser pour déplacer la vue · V : sélection"
+        case .text: return "Clic ou glisser pour créer un texte · Échap : sélection"
+        case .connector: return "Glisser d'une forme à une autre · Échap : sélection"
+        case .line, .dimension: return "Glisser pour tracer · Maj : 45° · Échap : sélection"
+        case .curve: return "Glisser, puis régler la courbure avec la poignée ronde · Échap : sélection"
+        case .rectangle, .ellipse, .diamond: return "Clic : taille par défaut · Glisser : taille libre · Échap : sélection"
+        }
     }
 
     /// Position du pointeur dans l'unité de la page (échelle comprise).

@@ -21,7 +21,7 @@ enum SVGExporter {
 
         """
         for c in page.connectors where painter.isDrawn(c) {
-            guard let pts = page.connectorPoints(c), pts.count > 1 else { continue }
+            guard let pts = page.connectorPoints(c, context: painter.routing), pts.count > 1 else { continue }
             var path = Path()
             path.move(to: pts[0])
             for p in pts.dropFirst() { path.addLine(to: p) }

@@ -70,6 +70,9 @@ struct InspectorView: View {
             Section("Position et taille") {
                 field("X", value: s.rect.origin.x) { $0.rect.origin.x = $1 }
                 field("Y", value: s.rect.origin.y) { $0.rect.origin.y = $1 }
+                Text("Valeurs en \(store.doc.unit.label.lowercased()), à l'échelle 1:\(Diagram.format(store.doc.scale, decimals: 0)) de la page.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if !s.kind.isPath {
                     field("Largeur", value: s.rect.width, minValue: 1) { $0.rect.size.width = $1 }
                     field("Hauteur", value: s.rect.height, minValue: 1) { $0.rect.size.height = $1 }
@@ -420,15 +423,20 @@ struct InspectorView: View {
         return list
     }
 
+    /// Champ numérique dans l'unité de la page (comme les règles et la barre d'état) ;
+    /// la valeur est reconvertie en unités du dessin à la saisie.
     private func field(_ label: String, value: CGFloat, minValue: CGFloat = -1_000_000,
                        apply: @escaping (inout Shape, CGFloat) -> Void) -> some View {
-        TextField(label, value: Binding<Double>(
-            get: { Double(value) },
+        let d = store.doc
+        return TextField("\(label) (\(d.unit.symbol))", value: Binding<Double>(
+            get: { d.measure(value) },
             set: { newValue in
                 guard newValue.isFinite else { return }
-                let v = min(max(CGFloat(newValue), minValue), 1_000_000)
+                let world = d.worldLength(forMeasure: newValue)
+                guard world.isFinite else { return }
+                let v = min(max(world, minValue), 1_000_000)
                 store.editSelectedShape(key: label) { apply(&$0, v) }
             }),
-                  format: .number.precision(.fractionLength(0...1)))
+                  format: .number.precision(.fractionLength(0...max(d.precision, 1))))
     }
 }

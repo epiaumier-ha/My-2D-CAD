@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import SwiftUI
 
 // MARK: - Points de connexion
 
@@ -107,6 +108,12 @@ extension Shape {
             let rx = rect.width / 2, ry = rect.height / 2
             guard rx > 0, ry > 0 else { return false }
             return abs(p.x - rect.midX) / rx + abs(p.y - rect.midY) / ry <= 1
+        case .freeform where !segments.isEmpty:
+            // Forme libre (SVG importé) : intérieur du tracé s'il est rempli, sinon à 4 points du trait.
+            let path = paths(in: rect).fill
+            if !noFill && path.contains(p) { return true }
+            return path.cgPath.copy(strokingWithWidth: 8, lineCap: .round, lineJoin: .round, miterLimit: 4)
+                .contains(p)
         default:
             // Autres formes et symboles : rectangle englobant (plus facile à saisir).
             return rect.contains(p)

@@ -63,7 +63,7 @@ extension DocumentStore {
     /// Insère un fragment avec de nouveaux identifiants. Le fragment est validé comme un fichier :
     /// le presse-papiers peut contenir des données venant d'une autre application.
     @discardableResult
-    func insertFragment(_ fragment: ClipboardFragment, offset: CGFloat) -> Bool {
+    func insertFragment(_ fragment: ClipboardFragment, offset: CGFloat, recordHistory: Bool = true) -> Bool {
         guard !fragment.shapes.isEmpty,
               doc.shapes.count + fragment.shapes.count <= DiagramIO.maxShapes,
               doc.connectors.count + fragment.connectors.count <= DiagramIO.maxConnectors else { return false }
@@ -100,9 +100,17 @@ extension DocumentStore {
         } catch {
             return false
         }
-        perform { d in
+        if recordHistory {
+            perform { d in
+                d.shapes.append(contentsOf: newShapes)
+                d.connectors.append(contentsOf: newConnectors)
+            }
+        } else {
+            // Dans une transaction en cours (⌥-glisser) : une seule étape d'annulation pour tout le geste.
+            var d = doc
             d.shapes.append(contentsOf: newShapes)
             d.connectors.append(contentsOf: newConnectors)
+            doc = d
         }
         selection = Set(newShapes.map(\.id))
         return true
@@ -314,5 +322,34 @@ extension DocumentStore {
         guard let s = doc.shape(id) else { return "—" }
         let text = s.text.split(separator: "\n").first.map(String.init) ?? ""
         return text.isEmpty ? s.kind.displayName : text
+    }
+}
+
+// MARK: - Sélection par rectangle et duplication par glisser
+
+@MainActor
+extension DocumentStore {
+    /// Sélection par rectangle : formes qui le touchent (groupes complets) et connecteurs entièrement dedans.
+    func selectInRect(_ rect: CGRect, additive: Bool) {
+        let d = doc
+        var hit = expandedToGroups(Set(d.shapes.filter { d.isSelectable($0) && $0.bounds.intersects(rect) }.map(\.id)))
+        let context = RoutingContext(d)
+        for c in d.connectors where d.isVisible(c) {
+            if let pts = d.connectorPoints(c, context: context), !pts.isEmpty, pts.allSatisfy({ rect.contains($0) }) {
+                hit.insert(c.id)
+            }
+        }
+        selection = additive ? selection.union(hit) : hit
+    }
+
+    /// ⌥-glisser : duplique la sélection sur place (dans la transaction du geste) et retourne
+    /// l'identifiant de la copie de `primary`, pour déplacer les copies.
+    func duplicateForDrag(primary: UUID) -> UUID? {
+        let originals = selectedShapes
+        guard let index = originals.firstIndex(where: { $0.id == primary }),
+              let fragment = makeFragment(),
+              insertFragment(fragment, offset: 0, recordHistory: false) else { return nil }
+        let copies = doc.shapes.suffix(originals.count)
+        return copies[copies.startIndex + index].id
     }
 }

@@ -67,14 +67,18 @@ struct CanvasView: View {
 
     var body: some View {
         GeometryReader { geo in
+            // Un seul peintre par rendu : index des formes et routage partagés, culling hors champ.
+            let frame = DiagramPainter(diagram: store.doc, zoom: store.zoom, offset: store.offset,
+                                       editingShapeID: store.editingShapeID,
+                                       viewport: CGRect(origin: .zero, size: geo.size))
             ZStack {
             Canvas { ctx, size in
-                render(&ctx, size: size)
+                render(&ctx, size: size, painter: frame)
             } symbols: {
                 // Libellés des formes : vues SwiftUI (police, alignement, retour à la ligne)
-                // dessinées par le canevas dans l'ordre des formes.
-                ForEach(painter.drawnShapes) { s in
-                    painter.labelView(s).tag(s.id)
+                // dessinées par le canevas dans l'ordre des formes. Seules les formes avec texte en ont.
+                ForEach(frame.labelledShapes) { s in
+                    frame.labelView(s).tag(s.id)
                 }
             }
             .gesture(dragGesture)
@@ -256,7 +260,13 @@ struct CanvasView: View {
                 } else if !store.selection.contains(s.id) {
                     store.selection = unit
                 }
-                if store.selection.contains(s.id) {
+                var primary = s.id
+                if store.selection.contains(s.id), NSEvent.modifierFlags.contains(.option),
+                   let copy = store.duplicateForDrag(primary: s.id) {
+                    // ⌥-glisser : on déplace les copies, les originaux restent en place.
+                    primary = copy
+                }
+                if store.selection.contains(primary) {
                     var origins: [UUID: CGPoint] = [:]
                     var bounds: CGRect?
                     for sh in store.doc.shapes where store.selection.contains(sh.id) {
@@ -268,7 +278,7 @@ struct CanvasView: View {
                     guideTargets = store.doc.shapes
                         .filter { !moving.contains($0.id) && store.doc.isVisible($0) }
                         .prefix(3000).map(\.bounds)
-                    interaction = .moving(origins: origins, start: w, primary: s.id, bounds: bounds ?? s.bounds)
+                    interaction = .moving(origins: origins, start: w, primary: primary, bounds: bounds ?? s.bounds)
                 }
             } else if let g = guideHit(at: screen) {
                 interaction = .movingGuide(id: g)
@@ -302,11 +312,12 @@ struct CanvasView: View {
                 if let gy = a.dy { dy = rawDy + gy }
                 guides = a.guides
             }
-            for i in store.doc.shapes.indices {
-                if let o = origins[store.doc.shapes[i].id] {
-                    store.doc.shapes[i].rect.origin = CGPoint(x: o.x + dx, y: o.y + dy)
-                }
+            // Modification groupée : une seule copie de la page et une seule mise à jour de l'interface.
+            var shapes = store.doc.shapes
+            for i in shapes.indices {
+                if let o = origins[shapes[i].id] { shapes[i].rect.origin = CGPoint(x: o.x + dx, y: o.y + dy) }
             }
+            store.doc.shapes = shapes
 
         case .resizing(let original, let handle):
             // Calcul dans le repère local de la forme, le coin opposé restant fixe.
@@ -436,12 +447,7 @@ struct CanvasView: View {
             }
 
         case .marquee(let start, let end, let additive):
-            let rect = rectBetween(start, end)
-            let d = store.doc
-            let hit = store.expandedToGroups(Set(d.shapes.filter {
-                d.isSelectable($0) && $0.bounds.intersects(rect)
-            }.map(\.id)))
-            store.selection = additive ? store.selection.union(hit) : hit
+            store.selectInRect(rectBetween(start, end), additive: additive)
 
         default:
             break
@@ -450,7 +456,7 @@ struct CanvasView: View {
 
     // MARK: - Rendu
 
-    private func render(_ ctx: inout GraphicsContext, size: CGSize) {
+    private func render(_ ctx: inout GraphicsContext, size: CGSize, painter: DiagramPainter) {
         ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(nsColor: .textBackgroundColor)))
         drawGrid(&ctx, size: size)
 

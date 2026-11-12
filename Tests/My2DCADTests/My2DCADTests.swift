@@ -818,3 +818,116 @@ final class CADFeaturesTests: XCTestCase {
         XCTAssertTrue(back.contains { $0.kind == .text && $0.text == "A & B" })
     }
 }
+
+// MARK: - Performance et régressions de la révision
+
+@MainActor
+final class PerformanceTests: XCTestCase {
+    /// Grille de formes reliées en chaîne : de quoi mesurer le routage et les tests de clic.
+    private func bigDiagram(columns: Int = 20, rows: Int = 15) -> Diagram {
+        var d = Diagram()
+        for r in 0..<rows {
+            for c in 0..<columns {
+                d.shapes.append(Shape(kind: .rectangle,
+                                      rect: CGRect(x: CGFloat(c) * 120, y: CGFloat(r) * 100, width: 60, height: 40)))
+            }
+        }
+        for i in 1..<d.shapes.count {
+            d.connectors.append(Connector(fromShape: d.shapes[i - 1].id, fromPort: 1, toShape: d.shapes[i].id, toPort: 3))
+        }
+        return d
+    }
+
+    private func seconds(_ block: () -> Void) -> Double {
+        let start = DispatchTime.now().uptimeNanoseconds
+        block()
+        return Double(DispatchTime.now().uptimeNanoseconds - start) / 1e9
+    }
+
+    func testRoutingAllConnectorsIsFast() {
+        let d = bigDiagram()   // 300 formes, 299 connecteurs
+        let context = RoutingContext(d)
+        let first = seconds { for c in d.connectors { _ = d.connectorPoints(c, context: context) } }
+        let cached = seconds { for c in d.connectors { _ = d.connectorPoints(c, context: context) } }
+        XCTAssertLessThan(first, 3.0, "routage initial trop lent : \(first) s")
+        XCTAssertLessThan(cached, 0.2, "routage en cache trop lent : \(cached) s")
+    }
+
+    func testHitTestingIsFast() {
+        let store = DocumentStore()
+        store.perform { $0 = self.bigDiagram() }
+        let t = seconds {
+            for i in 0..<50 { _ = store.hitShape(at: CGPoint(x: CGFloat(i) * 37, y: CGFloat(i) * 23)) }
+            _ = store.hitConnector(at: CGPoint(x: 90, y: 20))
+        }
+        XCTAssertLessThan(t, 1.0, "tests de clic trop lents : \(t) s")
+    }
+
+    func testOffScreenShapesAreCulled() {
+        let d = bigDiagram()
+        let painter = DiagramPainter(diagram: d, zoom: 1, offset: .zero, viewport: CGRect(x: 0, y: 0, width: 400, height: 300))
+        let onScreen = d.shapes.filter { painter.isOnScreen($0) }.count
+        XCTAssertLessThan(onScreen, d.shapes.count / 3, "les formes hors champ doivent être ignorées")
+        XCTAssertTrue(painter.labelledShapes.isEmpty, "aucune vue de libellé pour des formes sans texte")
+    }
+}
+
+@MainActor
+final class RevisionTwoTests: XCTestCase {
+    func testMarqueeSelectsInnerConnectors() {
+        let store = DocumentStore()
+        let a = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 40, height: 40))
+        let b = Shape(kind: .rectangle, rect: CGRect(x: 100, y: 0, width: 40, height: 40))
+        let far = Shape(kind: .rectangle, rect: CGRect(x: 1000, y: 0, width: 40, height: 40))
+        let inner = Connector(fromShape: a.id, fromPort: 1, toShape: b.id, toPort: 3)
+        let outer = Connector(fromShape: b.id, fromPort: 1, toShape: far.id, toPort: 3)
+        store.perform { $0.shapes = [a, b, far]; $0.connectors = [inner, outer] }
+        store.selectInRect(CGRect(x: -10, y: -10, width: 200, height: 100), additive: false)
+        XCTAssertEqual(store.selection, [a.id, b.id, inner.id])
+    }
+
+    func testOptionDragDuplicatesInOneUndoStep() {
+        let store = DocumentStore()
+        let a = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 40, height: 40))
+        let b = Shape(kind: .rectangle, rect: CGRect(x: 100, y: 0, width: 40, height: 40))
+        store.perform { $0.shapes = [a, b] }
+        store.selection = [a.id, b.id]
+        store.beginTransaction()
+        let copy = store.duplicateForDrag(primary: b.id)
+        XCTAssertNotNil(copy)
+        XCTAssertEqual(store.doc.shapes.count, 4)
+        XCTAssertEqual(store.doc.shape(copy!)?.rect, b.rect, "copie de b à la même place")
+        XCTAssertFalse(store.selection.contains(a.id), "les copies sont sélectionnées")
+        store.commitTransaction()
+        store.undo()
+        XCTAssertEqual(store.doc.shapes.count, 2, "une seule annulation")
+    }
+
+    func testFreeformHitTestFollowsPath() {
+        var p = Path()
+        p.move(to: CGPoint(x: 0, y: 0))
+        p.addLine(to: CGPoint(x: 100, y: 0))
+        p.addLine(to: CGPoint(x: 0, y: 100))
+        p.closeSubpath()   // triangle : le coin bas-droit de la boîte englobante est vide
+        let s = Shape.freeform(from: p)!
+        XCTAssertTrue(s.contains(CGPoint(x: 20, y: 20)))
+        XCTAssertFalse(s.contains(CGPoint(x: 90, y: 90)))
+        var open = s
+        open.noFill = true
+        XCTAssertFalse(open.contains(CGPoint(x: 20, y: 20)), "sans remplissage : seul le trait est cliquable")
+        XCTAssertTrue(open.contains(CGPoint(x: 50, y: 1)))
+    }
+
+    func testZoomHundredKeepsCentre() {
+        let store = DocumentStore()
+        store.canvasSize = CGSize(width: 800, height: 600)
+        store.offset = CGSize(width: -500, height: -300)
+        store.zoom = 2
+        let centre = store.toWorld(CGPoint(x: 400, y: 300))
+        store.setZoom(1)
+        XCTAssertEqual(store.zoom, 1)
+        let after = store.toWorld(CGPoint(x: 400, y: 300))
+        XCTAssertEqual(after.x, centre.x, accuracy: 1e-6)
+        XCTAssertEqual(after.y, centre.y, accuracy: 1e-6)
+    }
+}

@@ -11,6 +11,42 @@ struct DiagramPainter {
     var editingShapeID: UUID?
     /// Export / impression : seuls les calques visibles et imprimables sont dessinés.
     var forExport = false
+    /// Zone visible à l'écran : ce qui est en dehors n'est pas dessiné (nil : tout dessiner).
+    var viewport: CGRect?
+    private let routingBox: RoutingBox
+
+    /// Contexte de routage construit à la première utilisation, puis partagé.
+    private final class RoutingBox {
+        let diagram: Diagram
+        lazy var context = RoutingContext(diagram)
+        init(_ diagram: Diagram) { self.diagram = diagram }
+    }
+
+    var routing: RoutingContext { routingBox.context }
+
+    init(diagram: Diagram, zoom: CGFloat, offset: CGSize, editingShapeID: UUID? = nil,
+         forExport: Bool = false, viewport: CGRect? = nil) {
+        self.diagram = diagram
+        self.zoom = zoom
+        self.offset = offset
+        self.editingShapeID = editingShapeID
+        self.forExport = forExport
+        self.viewport = viewport
+        routingBox = RoutingBox(diagram)
+    }
+
+    /// La forme est-elle (au moins en partie) dans la zone visible ? Marge pour les libellés et les traits.
+    func isOnScreen(_ s: Shape) -> Bool {
+        guard let viewport else { return true }
+        return toScreen(s.bounds).insetBy(dx: -150, dy: -150).intersects(viewport)
+    }
+
+    /// Connecteur potentiellement visible : zone englobant ses deux formes (avec marge de contournement).
+    func isOnScreen(_ c: Connector) -> Bool {
+        guard let viewport else { return true }
+        guard let a = routing.byID[c.fromShape], let b = routing.byID[c.toShape] else { return false }
+        return toScreen(a.bounds.union(b.bounds)).insetBy(dx: -200 * zoom - 20, dy: -200 * zoom - 20).intersects(viewport)
+    }
 
     func toScreen(_ p: CGPoint) -> CGPoint {
         CGPoint(x: p.x * zoom + offset.width, y: p.y * zoom + offset.height)
@@ -24,17 +60,25 @@ struct DiagramPainter {
     func isDrawn(_ s: Shape) -> Bool { forExport ? diagram.isPrintable(s) : diagram.isVisible(s) }
 
     func isDrawn(_ c: Connector) -> Bool {
-        guard let a = diagram.shape(c.fromShape), let b = diagram.shape(c.toShape) else { return false }
+        guard let a = routing.byID[c.fromShape], let b = routing.byID[c.toShape] else { return false }
         return isDrawn(a) && isDrawn(b)
     }
 
     /// Formes dessinées, dans l'ordre de superposition.
     var drawnShapes: [Shape] { diagram.shapes.filter { isDrawn($0) } }
 
-    /// Connecteurs sous les formes, puis les formes dans leur ordre.
+    /// Formes dont le libellé doit être préparé (texte non vide, à l'écran) : les autres n'ont pas de vue.
+    var labelledShapes: [Shape] {
+        diagram.shapes.filter { s in
+            let hasText = !s.text.isEmpty || s.kind == .text || s.kind == .dimension
+            return hasText && s.id != editingShapeID && isDrawn(s) && isOnScreen(s)
+        }
+    }
+
+    /// Connecteurs sous les formes, puis les formes dans leur ordre (seulement ce qui est à l'écran).
     func drawContent(_ ctx: inout GraphicsContext) {
-        for c in diagram.connectors where isDrawn(c) { drawConnector(c, in: &ctx) }
-        for s in diagram.shapes where isDrawn(s) { drawShape(s, in: &ctx) }
+        for c in diagram.connectors where isDrawn(c) && isOnScreen(c) { drawConnector(c, in: &ctx) }
+        for s in diagram.shapes where isDrawn(s) && isOnScreen(s) { drawShape(s, in: &ctx) }
     }
 
     /// Rotation autour du centre du rectangle écran (le zoom est uniforme, l'angle est conservé).
@@ -148,7 +192,7 @@ struct DiagramPainter {
     }
 
     func drawConnector(_ c: Connector, in ctx: inout GraphicsContext) {
-        guard let world = diagram.connectorPoints(c), world.count > 1 else { return }
+        guard let world = diagram.connectorPoints(c, context: routing), world.count > 1 else { return }
         let pts = world.map { toScreen($0) }
         var path = Path()
         path.move(to: pts[0])
@@ -241,7 +285,7 @@ struct ExportPageView: View {
             ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
             painter.drawContent(&ctx)
         } symbols: {
-            ForEach(painter.drawnShapes) { s in
+            ForEach(painter.labelledShapes) { s in
                 painter.labelView(s).tag(s.id)
             }
         }
