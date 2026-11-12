@@ -1,37 +1,56 @@
 import SwiftUI
 
-/// Onglets de l'inspecteur, sur le modèle du volet « Format de la forme » de Visio.
-enum InspectorTab: String, CaseIterable, Identifiable {
-    case shape = "Forme"
-    case style = "Style"
-    case text = "Texte"
-    case arrange = "Organiser"
-
-    var id: String { rawValue }
-}
-
+/// Volet « Format de la forme », comme dans Visio : sections repliables Remplissage, Trait, Texte,
+/// Taille et position. Sans sélection, il présente la page.
 struct InspectorView: View {
     @EnvironmentObject var store: DocumentStore
-    @State private var tab: InspectorTab = .shape
+    @AppStorage(PanelKey.format) private var showFormat = true
+    /// Sections repliées (par titre).
+    @State private var collapsed: Set<String> = ["Bloc de texte"]
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("Onglet", selection: $tab) {
-                ForEach(InspectorTab.allCases) { Text($0.rawValue).tag($0) }
+            HStack {
+                Text(store.selection.isEmpty ? "Page" : "Format de la forme").font(.headline)
+                Spacer()
+                Button { showFormat = false } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.borderless)
+                    .help("Fermer le volet (⌥⌘2 pour le rouvrir)")
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .padding(8)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
             Divider()
             Form {
-                switch tab {
-                case .shape: shapeTab
-                case .style: styleTab
-                case .text: textTab
-                case .arrange: arrangeTab
+                if store.selection.isEmpty {
+                    shapeTab
+                } else {
+                    styleTab
+                    if !store.selectedShapes.isEmpty { textTab }
+                    shapeTab
                 }
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+        }
+    }
+
+    /// Section repliable d'un clic sur son titre.
+    private func pane<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        let open = !collapsed.contains(title)
+        return Section {
+            if open { content() }
+        } header: {
+            Button {
+                if open { collapsed.insert(title) } else { collapsed.remove(title) }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: open ? "chevron.down" : "chevron.right").font(.caption2).frame(width: 10)
+                    Text(title)
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -55,12 +74,12 @@ struct InspectorView: View {
         }
     }
 
-    // MARK: - Onglet Forme
+    // MARK: - Forme, page, taille et position
 
     @ViewBuilder
     private var shapeTab: some View {
         if let s = store.singleSelectedShape {
-            Section("Forme") {
+            pane("Forme sélectionnée") {
                 LabeledContent("Type", value: s.kind.displayName)
                 if s.kind.isDimension {
                     LabeledContent("Mesure", value: store.doc.dimensionMeasure(s))
@@ -73,16 +92,9 @@ struct InspectorView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                TextField("Texte", text: Binding(
-                    get: { s.text },
-                    set: { v in
-                        let limited = String(v.prefix(DiagramIO.maxTextLength))
-                        store.editSelectedShape(key: "text") { $0.text = limited }
-                    }), axis: .vertical)
-                    .lineLimit(1...4)
             }
             if !store.doc.layers.isEmpty { layerSection }
-            Section("Position et taille") {
+            pane("Taille et position") {
                 field("X", value: s.rect.origin.x) { $0.rect.origin.x = $1 }
                 field("Y", value: s.rect.origin.y) { $0.rect.origin.y = $1 }
                 Text("Valeurs en \(store.doc.unit.label.lowercased()), à l'échelle 1:\(Diagram.format(store.doc.scale, decimals: 0)) de la page.")
@@ -101,7 +113,7 @@ struct InspectorView: View {
                 }
             }
         } else if store.selection.count == 1, let c = selectedConnectors.first {
-            Section("Connecteur") {
+            pane("Connecteur") {
                 LabeledContent("De", value: store.shapeLabel(c.fromShape))
                 LabeledContent("Vers", value: store.shapeLabel(c.toShape))
                 LabeledContent("Tracé", value: c.routing.label)
@@ -113,19 +125,19 @@ struct InspectorView: View {
                     .foregroundStyle(.secondary)
             }
         } else if store.selection.isEmpty {
-            Section("Document") {
+            pane("Document") {
                 LabeledContent("Formes", value: "\(store.doc.shapes.count)")
                 LabeledContent("Connecteurs", value: "\(store.doc.connectors.count)")
                 LabeledContent("Zoom", value: "\(Int((store.zoom * 100).rounded())) %")
             }
             pageSection
-            Section("Raccourcis") {
+            pane("Raccourcis") {
                 Text("V sélection · H main · C connecteur · T texte\nR rectangle · E ellipse · D losange · L trait · B courbe · M cote\nÉchap : revenir à la sélection")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         } else {
-            Section("Sélection") {
+            pane("Sélection") {
                 Text(selectionSummary)
             }
             if !store.selectedShapes.isEmpty && !store.doc.layers.isEmpty { layerSection }
@@ -134,7 +146,7 @@ struct InspectorView: View {
 
     /// Calque des formes sélectionnées.
     private var layerSection: some View {
-        Section("Calque") {
+        pane("Calque") {
             Picker("Calque", selection: Binding<UUID?>(
                 get: { store.selectionLayerID ?? nil },
                 set: { store.assignSelection(toLayer: $0) })) {
@@ -149,7 +161,7 @@ struct InspectorView: View {
     /// Réglages de la page : unité, échelle, décimales, connecteurs, repères.
     private var pageSection: some View {
         let d = store.doc
-        return Section("Page « \(d.name) »") {
+        return pane("Page « \(d.name) »") {
             Picker("Unité", selection: Binding(
                 get: { d.unit },
                 set: { v in store.updatePageSettings { $0.unit = v } })) {
@@ -189,13 +201,13 @@ struct InspectorView: View {
         return parts.joined(separator: " et ") + (shapes + connectors > 1 ? " sélectionnés" : " sélectionné")
     }
 
-    // MARK: - Onglet Style (remplissage et trait)
+    // MARK: - Remplissage et trait
 
     @ViewBuilder
     private var styleTab: some View {
         let fillable = store.selectedShapes.filter(\.supportsFill)
         if let first = fillable.first {
-            Section("Remplissage") {
+            pane("Remplissage") {
                 Toggle("Remplir", isOn: Binding(
                     get: { !first.noFill },
                     set: { on in store.editSelection(key: "noFill", shapes: { if $0.supportsFill { $0.noFill = !on } }) }))
@@ -213,7 +225,7 @@ struct InspectorView: View {
             }
         }
         if let c = selectedConnectors.first {
-            Section("Connecteur") {
+            pane("Connecteur") {
                 Picker("Tracé", selection: Binding(
                     get: { c.routing },
                     set: { v in store.editSelection(key: "routing", connectors: { $0.routing = v }) })) {
@@ -227,13 +239,10 @@ struct InspectorView: View {
         if let style = store.selectionLineStyle {
             lineSection(style)
         }
-        if fillable.isEmpty && store.selectionLineStyle == nil {
-            placeholder("Sélectionnez une forme, un trait ou un connecteur pour modifier son style.")
-        }
     }
 
     private func lineSection(_ style: LineStyle) -> some View {
-        Section("Trait") {
+        pane("Trait") {
             ColorPicker("Couleur", selection: Binding(
                 get: { style.color.color },
                 set: { c in
@@ -287,14 +296,14 @@ struct InspectorView: View {
         }
     }
 
-    // MARK: - Onglet Texte
+    // MARK: - Texte
 
     @ViewBuilder
     private var textTab: some View {
         if let first = store.selectedShapes.first {
             let ts = first.textStyle
             if store.selectedShapes.count == 1 {
-                Section("Contenu") {
+                pane("Texte") {
                     TextField("Texte", text: Binding(
                         get: { first.text },
                         set: { v in
@@ -307,7 +316,7 @@ struct InspectorView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            Section("Police") {
+            pane("Police") {
                 Picker("Taille", selection: Binding(
                     get: { ts.size },
                     set: { v in store.editSelectionTextStyle(key: "size") { $0.size = v } })) {
@@ -356,7 +365,7 @@ struct InspectorView: View {
     /// Bloc de texte : position (décalage) et largeur, comme l'« Outil Bloc de texte » de Visio.
     private func textBlockSection(_ s: Shape) -> some View {
         let d = store.doc
-        return Section("Bloc de texte") {
+        return pane("Bloc de texte") {
             offsetField("Décalage X", value: s.textOffset.x) { $0.textOffset.x = $1 }
             offsetField("Décalage Y", value: s.textOffset.y) { $0.textOffset.y = $1 }
             if s.supportsTextBlockWidth {
@@ -396,99 +405,7 @@ struct InspectorView: View {
             }), format: .number.precision(.fractionLength(0...max(d.precision, 1))))
     }
 
-    // MARK: - Onglet Organiser
-
-    @ViewBuilder
-    private var arrangeTab: some View {
-        let count = store.selectedShapes.count
-        if count == 0 {
-            placeholder("Sélectionnez des formes pour les aligner, les répartir, les faire pivoter ou changer leur ordre.")
-        } else {
-            Section("Aligner") {
-                HStack(spacing: 2) {
-                    ForEach(ShapeAlignment.allCases, id: \.self) { a in
-                        iconButton(a.symbol, help: "Aligner \(a.label.lowercased())") { store.align(a) }
-                    }
-                }
-                .disabled(count < 2)
-                if count < 2 {
-                    Text("Sélectionnez au moins 2 formes.").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            Section("Répartir") {
-                HStack(spacing: 2) {
-                    iconButton("distribute.horizontal.center", help: "Répartir horizontalement") {
-                        store.distribute(.horizontal)
-                    }
-                    iconButton("distribute.vertical.center", help: "Répartir verticalement") {
-                        store.distribute(.vertical)
-                    }
-                }
-                .disabled(count < 3)
-                if count < 3 {
-                    Text("Sélectionnez au moins 3 formes.").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            Section("Pivoter") {
-                HStack(spacing: 2) {
-                    iconButton("rotate.left", help: "Faire pivoter de 90° à gauche (⌃L)") { store.rotateSelection(by: -90) }
-                    iconButton("rotate.right", help: "Faire pivoter de 90° à droite (⌃R)") { store.rotateSelection(by: 90) }
-                }
-            }
-            Section("Opérations") {
-                let ops = ShapeOperation.allCases.filter { $0 != .offset }
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 6) {
-                    ForEach(ops) { op in
-                        Button(op.label) { store.runOperation(op) }
-                            .disabled(!store.canApply(op))
-                            .help(op.help)
-                    }
-                }
-                HStack {
-                    let d = store.doc
-                    TextField("Distance (\(d.unit.symbol))", value: Binding<Double>(
-                        get: { d.measure(store.offsetDistance) },
-                        set: { v in
-                            let world = d.worldLength(forMeasure: v)
-                            guard world.isFinite, world > 0, world <= 10_000 else { return }
-                            store.offsetDistance = world
-                        }), format: .number.precision(.fractionLength(0...max(d.precision, 1))))
-                    Button(ShapeOperation.offset.label) { store.runOperation(.offset) }
-                        .disabled(!store.canApply(.offset))
-                        .help(ShapeOperation.offset.help)
-                }
-                Text("La première forme sélectionnée donne son format au résultat (et sert de base à Soustraire).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Section("Groupe") {
-                HStack {
-                    Button("Grouper") { store.groupSelection() }.disabled(!store.canGroup)
-                    Button("Dissocier") { store.ungroupSelection() }.disabled(!store.canUngroup)
-                }
-                Text("⌘G grouper, ⇧⌘G dissocier. Un clic sur une forme groupée sélectionne tout le groupe.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Section("Ordre") {
-                HStack(spacing: 2) {
-                    ForEach(StackingOrder.allCases, id: \.self) { o in
-                        iconButton(o.symbol, help: o.label) { store.reorderSelection(o) }
-                    }
-                }
-            }
-        }
-    }
-
     // MARK: - Composants
-
-    private func iconButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol).frame(width: 24, height: 22)
-        }
-        .buttonStyle(.borderless)
-        .help(help)
-    }
 
     private func percentSlider(_ title: String, value: Double, set: @escaping (Double) -> Void) -> some View {
         LabeledContent(title) {

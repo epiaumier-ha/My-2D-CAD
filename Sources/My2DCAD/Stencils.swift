@@ -147,12 +147,23 @@ extension DocumentStore {
 // MARK: - Panneau des bibliothèques
 
 struct StencilPanel: View {
+    @AppStorage(PanelKey.shapes) private var showShapes = true
     @State private var search = ""
     @State private var collapsed: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
-            TextField("Rechercher une forme", text: $search)
+            HStack {
+                Text("Formes").font(.headline)
+                Spacer()
+                Button { showShapes = false } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.borderless)
+                    .help("Fermer le volet (⌥⌘1 pour le rouvrir)")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            Divider()
+            TextField("Rechercher des formes", text: $search)
                 .textFieldStyle(.roundedBorder)
                 .padding(8)
             Divider()

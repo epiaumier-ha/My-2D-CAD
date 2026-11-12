@@ -20,28 +20,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct ContentView: View {
     @EnvironmentObject var store: DocumentStore
-    @State private var showStencils = true
-    @AppStorage("assistant.visible") private var showAssistant = false
+    @Environment(\.colorScheme) private var scheme
+    @AppStorage(PanelKey.shapes) private var showShapes = true
+    @AppStorage(PanelKey.format) private var showFormat = true
+    @AppStorage(PanelKey.assistant) private var showAssistant = false
 
     var body: some View {
-        HStack(spacing: 0) {
-            if showStencils {
-                StencilPanel().frame(width: 210)
-                Divider()
-            }
-            VStack(spacing: 0) {
-                DrawingArea()
-                Divider()
-                PageBar()
-                Divider()
-                StatusBar(pointer: store.pointer)
-            }
-            if showAssistant {
-                Divider()
-                AssistantPanel().frame(width: 320)
+        VStack(spacing: 0) {
+            Ribbon()
+            // Disposition de Visio : volet Formes à gauche, dessin au centre, volets à droite.
+            HStack(spacing: 0) {
+                if showShapes {
+                    StencilPanel()
+                        .frame(width: 220)
+                        .background(VisioTheme.pane(scheme))
+                    Divider()
+                }
+                VStack(spacing: 0) {
+                    DrawingArea()
+                    Divider()
+                    PageBar()
+                }
+                if showAssistant {
+                    Divider()
+                    AssistantPanel().frame(width: 320)
+                }
+                if showFormat {
+                    Divider()
+                    InspectorView()
+                        .frame(width: 290)
+                        .background(VisioTheme.pane(scheme))
+                }
             }
             Divider()
-            InspectorView().frame(width: 290)
+            StatusBar(pointer: store.pointer)
         }
         .navigationTitle(store.title)
         .background(WindowCloseGuard {
@@ -49,73 +61,7 @@ struct ContentView: View {
             if ok { DocumentStore.shared.closeConfirmed = true }
             return ok
         })
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button { showStencils.toggle() } label: { Image(systemName: "sidebar.left") }
-                    .help("Afficher ou masquer les bibliothèques de formes")
-            }
-            ToolbarItem(placement: .principal) {
-                ToolStrip()
-            }
-            ToolbarItemGroup {
-                Button { store.undo() } label: { Image(systemName: "arrow.uturn.backward") }
-                    .help("Annuler (⌘Z)").disabled(!store.canUndo)
-                Button { store.redo() } label: { Image(systemName: "arrow.uturn.forward") }
-                    .help("Rétablir (⇧⌘Z)").disabled(!store.canRedo)
-                Toggle(isOn: $store.snapEnabled) { Image(systemName: "squareshape.split.2x2.dotted") }
-                    .help("Magnétisme de la grille")
-                ZoomMenu()
-                Toggle(isOn: $showAssistant) { Image(systemName: "sparkles") }
-                    .help("Assistant IA (⌥⌘I)")
-            }
-        }
         .onAppear { store.installEventMonitor() }
-    }
-}
-
-/// Outils groupés façon Visio : Pointeur, Main, Connecteur, Texte, puis un menu « Dessin ».
-struct ToolStrip: View {
-    @EnvironmentObject var store: DocumentStore
-
-    var body: some View {
-        HStack(spacing: 2) {
-            toolButton(.select)
-            toolButton(.pan)
-            Divider().frame(height: 18).padding(.horizontal, 4)
-            toolButton(.connector)
-            toolButton(.text)
-            Divider().frame(height: 18).padding(.horizontal, 4)
-            drawingMenu
-        }
-    }
-
-    private func toolButton(_ t: Tool) -> some View {
-        Button { store.tool = t } label: {
-            Image(systemName: t.symbol)
-                .frame(width: 30, height: 24)
-                .background(RoundedRectangle(cornerRadius: 5)
-                    .fill(store.tool == t ? Color.accentColor.opacity(0.25) : Color.clear))
-        }
-        .buttonStyle(.plain)
-        .help(t.labelWithShortcut)
-    }
-
-    /// Bouton partagé : un clic reprend le dernier outil de dessin, la flèche ouvre la liste.
-    private var drawingMenu: some View {
-        let current = store.lastDrawingTool
-        return Menu {
-            ForEach(Tool.drawingTools) { t in
-                Button { store.tool = t } label: { Label(t.labelWithShortcut, systemImage: t.symbol) }
-            }
-        } label: {
-            Image(systemName: current.symbol)
-        } primaryAction: {
-            store.tool = current
-        }
-        .frame(width: 52)
-        .background(RoundedRectangle(cornerRadius: 5)
-            .fill(store.tool.isDrawingTool ? Color.accentColor.opacity(0.25) : Color.clear))
-        .help("Dessin : \(current.labelWithShortcut) — cliquez sur la flèche pour choisir une autre forme")
     }
 }
 
@@ -133,31 +79,26 @@ struct ZoomMenu: View {
         } label: {
             Text("\(Int((store.zoom * 100).rounded())) %").monospacedDigit()
         }
-        .frame(width: 80)
+        .menuStyle(.borderlessButton)
+        .fixedSize()
         .help("Zoom")
     }
-}
-
-/// Si un champ de texte est en cours d'édition, la commande lui est transmise
-/// (copier-coller de texte dans l'inspecteur) ; sinon elle s'applique au dessin.
-@MainActor
-private func forwardToTextEditor(_ action: Selector) -> Bool {
-    guard let editor = NSApp.keyWindow?.firstResponder as? NSText else { return false }
-    return NSApp.sendAction(action, to: editor, from: nil)
 }
 
 @main
 struct My2DCADApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = DocumentStore.shared
-    @AppStorage("assistant.visible") private var showAssistant = false
+    @AppStorage(PanelKey.shapes) private var showShapes = true
+    @AppStorage(PanelKey.format) private var showFormat = true
+    @AppStorage(PanelKey.assistant) private var showAssistant = false
 
     var body: some Scene {
         // Fenêtre unique : le document n'est pas partagé entre plusieurs fenêtres.
         Window("My2DCAD", id: "main") {
             ContentView()
                 .environmentObject(store)
-                .frame(minWidth: 1050, minHeight: 640)
+                .frame(minWidth: 1100, minHeight: 680)
         }
         .commands {
             CommandGroup(replacing: .newItem) {
@@ -167,12 +108,12 @@ struct My2DCADApp: App {
                 Button("Enregistrer") { store.save() }.keyboardShortcut("s")
                 Button("Enregistrer sous…") { store.saveAs() }.keyboardShortcut("s", modifiers: [.command, .shift])
                 Divider()
-                Button("Exporter en PDF…") { store.exportPDF() }.keyboardShortcut("e", modifiers: [.command, .option])
-                Button("Exporter la page en PNG…") { store.exportPNG() }
-                    .keyboardShortcut("e", modifiers: [.command, .option, .shift])
-                Button("Exporter la page en SVG…") { store.exportSVG() }
-                Divider()
-                Button("Importer un SVG…") { store.importSVG() }.keyboardShortcut("i", modifiers: [.command, .shift])
+                Menu("Exporter") {
+                    Button("PDF (toutes les pages)…") { store.exportPDF() }.keyboardShortcut("e", modifiers: [.command, .option])
+                    Button("PNG (page affichée)…") { store.exportPNG() }
+                        .keyboardShortcut("e", modifiers: [.command, .option, .shift])
+                    Button("SVG (page affichée)…") { store.exportSVG() }
+                }
             }
             CommandGroup(replacing: .printItem) {
                 Button("Imprimer…") { store.printDocument() }.keyboardShortcut("p")
@@ -183,27 +124,55 @@ struct My2DCADApp: App {
                     .keyboardShortcut("z", modifiers: [.command, .shift]).disabled(!store.canRedo)
             }
             CommandGroup(replacing: .pasteboard) {
-                Button("Couper") {
-                    if !forwardToTextEditor(#selector(NSText.cut(_:))) { store.cutSelection() }
-                }.keyboardShortcut("x")
-                Button("Copier") {
-                    if !forwardToTextEditor(#selector(NSText.copy(_:))) { store.copySelection() }
-                }.keyboardShortcut("c")
-                Button("Coller") {
-                    if !forwardToTextEditor(#selector(NSText.paste(_:))) { store.paste() }
-                }.keyboardShortcut("v")
-                Divider()
+                Button("Couper") { store.cutCommand() }.keyboardShortcut("x")
+                Button("Copier") { store.copyCommand() }.keyboardShortcut("c")
+                Button("Coller") { store.pasteCommand() }.keyboardShortcut("v")
                 Button("Dupliquer") { store.duplicateSelection() }.keyboardShortcut("d")
-                Button("Tout sélectionner") {
-                    if !forwardToTextEditor(#selector(NSText.selectAll(_:))) { store.selectAll() }
-                }.keyboardShortcut("a")
-                Button("Supprimer la sélection") {
-                    if !forwardToTextEditor(#selector(NSText.delete(_:))) { store.deleteSelection() }
-                }
-                .disabled(store.selection.isEmpty)
+                    .disabled(store.selection.isEmpty)
+                Divider()
+                Button("Tout sélectionner") { store.selectAllCommand() }.keyboardShortcut("a")
+                Button("Supprimer la sélection") { store.deleteCommand() }
                     .keyboardShortcut(.delete, modifiers: .command)
+                    .disabled(store.selection.isEmpty)
             }
-            CommandMenu("Disposition") {
+            // Mêmes rubriques que les onglets du ruban : Affichage, Insertion, Forme, Outils, Page.
+            CommandMenu("Affichage") {
+                Toggle("Volet Formes", isOn: $showShapes).keyboardShortcut("1", modifiers: [.command, .option])
+                Toggle("Volet Format de la forme", isOn: $showFormat).keyboardShortcut("2", modifiers: [.command, .option])
+                Toggle("Assistant IA", isOn: $showAssistant).keyboardShortcut("i", modifiers: [.command, .option])
+                Divider()
+                Toggle("Règles", isOn: $store.showRulers).keyboardShortcut("r", modifiers: [.command, .option])
+                Toggle("Magnétisme de la grille", isOn: $store.snapEnabled)
+                Toggle("Repères d'alignement dynamiques", isOn: $store.guidesEnabled)
+                Button("Supprimer tous les repères") { store.removeAllGuides() }
+                    .disabled(store.doc.guides.isEmpty)
+                Divider()
+                Button("Zoom avant") { store.zoom(by: 1.25) }.keyboardShortcut("+")
+                Button("Zoom arrière") { store.zoom(by: 0.8) }.keyboardShortcut("-")
+                Button("Zoom 100 %") { store.setZoom(1) }.keyboardShortcut("0")
+                Button("Ajuster à la fenêtre") { store.fitToContent() }.keyboardShortcut("9")
+                Button("Revenir à l'origine") { store.resetView() }
+            }
+            CommandMenu("Insertion") {
+                Button("Nouvelle page") { store.addPage() }.keyboardShortcut("n", modifiers: [.command, .option])
+                Button("Nouveau calque") { store.addLayer() }
+                Divider()
+                Button("Zone de texte") { store.tool = .text }
+                Button("Connecteur") { store.tool = .connector }
+                Menu("Forme") {
+                    ForEach(Tool.drawingTools) { tool in
+                        Button(tool.label) { store.tool = tool }
+                    }
+                }
+                Menu("Cote") {
+                    ForEach(StencilCatalog.libraries.first(where: { $0.id == "dimensions" })?.items ?? []) { item in
+                        Button(item.name) { store.insertStencil(item, centeredAt: store.visibleCenter) }
+                    }
+                }
+                Divider()
+                Button("Dessin SVG…") { store.importSVG() }.keyboardShortcut("i", modifiers: [.command, .shift])
+            }
+            CommandMenu("Forme") {
                 Menu("Aligner") {
                     ForEach(ShapeAlignment.allCases, id: \.self) { a in
                         Button(a.label) { store.align(a) }
@@ -215,13 +184,13 @@ struct My2DCADApp: App {
                     Button("Verticalement") { store.distribute(.vertical) }
                 }
                 .disabled(store.selectedShapes.count < 3)
-                Divider()
-                Button("Faire pivoter à droite (90°)") { store.rotateSelection(by: 90) }
-                    .keyboardShortcut("r", modifiers: .control)
-                    .disabled(store.selectedShapes.isEmpty)
-                Button("Faire pivoter à gauche (90°)") { store.rotateSelection(by: -90) }
-                    .keyboardShortcut("l", modifiers: .control)
-                    .disabled(store.selectedShapes.isEmpty)
+                Menu("Faire pivoter") {
+                    Button("À droite de 90°") { store.rotateSelection(by: 90) }
+                        .keyboardShortcut("r", modifiers: .control)
+                    Button("À gauche de 90°") { store.rotateSelection(by: -90) }
+                        .keyboardShortcut("l", modifiers: .control)
+                }
+                .disabled(store.selectedShapes.isEmpty)
                 Divider()
                 Button("Grouper") { store.groupSelection() }
                     .keyboardShortcut("g").disabled(!store.canGroup)
@@ -244,7 +213,12 @@ struct My2DCADApp: App {
                 }
                 .disabled(store.selection.isEmpty)
                 Divider()
+                Button("Rétablir le bloc de texte") { store.resetTextBlocks() }
+                    .disabled(store.selectedShapes.isEmpty)
+                Button("Décoller la cote") { store.unglueSelection() }
+                    .disabled(!store.selectionHasGlue)
                 Button("Inverser le sens du connecteur") { store.reverseSelectedConnectors() }
+                    .disabled(store.selection.isEmpty)
             }
             CommandMenu("Outils") {
                 // ⌘1 à ⌘9 pour les neuf premiers outils ; les suivants n'ont que leur lettre.
@@ -257,21 +231,7 @@ struct My2DCADApp: App {
                     }
                 }
             }
-            CommandMenu("Affichage") {
-                Button("Zoom avant") { store.zoom(by: 1.25) }.keyboardShortcut("+")
-                Button("Zoom arrière") { store.zoom(by: 0.8) }.keyboardShortcut("-")
-                Button("Zoom 100 %") { store.setZoom(1) }.keyboardShortcut("0")
-                Button("Revenir à l'origine") { store.resetView() }
-                Button("Ajuster à la fenêtre") { store.fitToContent() }.keyboardShortcut("9")
-                Toggle("Magnétisme de la grille", isOn: $store.snapEnabled)
-                Toggle("Repères d'alignement dynamiques", isOn: $store.guidesEnabled)
-                Toggle("Assistant IA", isOn: $showAssistant).keyboardShortcut("i", modifiers: [.command, .option])
-                Toggle("Règles", isOn: $store.showRulers).keyboardShortcut("r", modifiers: [.command, .option])
-                Button("Supprimer tous les repères") { store.removeAllGuides() }
-                    .disabled(store.doc.guides.isEmpty)
-            }
             CommandMenu("Page") {
-                Button("Nouvelle page") { store.addPage() }.keyboardShortcut("n", modifiers: [.command, .option])
                 Button("Dupliquer la page") { store.duplicatePage(store.currentPage) }
                 Button("Supprimer la page") { store.deletePage(store.currentPage) }
                     .disabled(store.pageCount == 1)
@@ -282,8 +242,6 @@ struct My2DCADApp: App {
                 Button("Page suivante") { store.selectNextPage() }
                     .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
                     .disabled(store.currentPage == store.pageCount - 1)
-                Divider()
-                Button("Nouveau calque") { store.addLayer() }
             }
         }
         Settings {

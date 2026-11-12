@@ -18,7 +18,20 @@ struct StatusBar: View {
             if store.snapEnabled {
                 Label("Grille \(Int(store.gridSize))", systemImage: "squareshape.split.2x2.dotted")
             }
-            Text("\(Int((store.zoom * 100).rounded())) %").monospacedDigit()
+            // Zoom à droite, comme dans Visio : réduire, curseur, agrandir, pourcentage, ajuster.
+            Button { store.zoom(by: 0.8) } label: { Image(systemName: "minus") }
+                .buttonStyle(.borderless).help("Zoom arrière (⌘-)")
+            Slider(value: Binding(
+                get: { min(max(log2(Double(store.zoom)), -3), 3) },
+                set: { store.setZoom(CGFloat(pow(2, $0))) }), in: -3...3)
+                .controlSize(.mini)
+                .frame(width: 110)
+                .help("Zoom")
+            Button { store.zoom(by: 1.25) } label: { Image(systemName: "plus") }
+                .buttonStyle(.borderless).help("Zoom avant (⌘+)")
+            ZoomMenu()
+            Button { store.fitToContent() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                .buttonStyle(.borderless).help("Ajuster à la fenêtre (⌘9)")
         }
         .font(.caption)
         .foregroundStyle(.secondary)
