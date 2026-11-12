@@ -4,10 +4,16 @@ import SwiftUI
 
 extension ShapeKind {
     /// Trait, courbe ou cote : défini par des points plutôt que par un rectangle.
-    var isPath: Bool { self == .line || self == .curve || self == .dimension }
+    var isPath: Bool { self == .line || self == .curve || isDimension }
 
-    /// Nombre de points attendus (trait 2 ; courbe et cote 3).
-    var pointCount: Int { self == .line ? 2 : 3 }
+    /// Nombre de points attendus (trait, rayon et diamètre 2 ; cote angulaire 4 ; courbe et cotes linéaires 3).
+    var pointCount: Int {
+        switch self {
+        case .line, .radiusDimension, .diameterDimension: return 2
+        case .angularDimension: return 4
+        default: return 3
+        }
+    }
 }
 
 /// Point d'une courbe de Bézier quadratique (début a, contrôle c, fin b) pour t ∈ [0, 1].
@@ -24,11 +30,8 @@ func pathSamples(kind: ShapeKind, points p: [CGPoint]) -> [CGPoint] {
         return p
     case .curve where p.count == 3:
         return (0...32).map { quadPoint(p[0], p[1], p[2], CGFloat($0) / 32) }
-    case .dimension where p.count == 3:
-        let g = dimensionGeometry(p[0], p[1], p[2])
-        return [g.a, g.a2, g.b2, g.b]
     default:
-        return []
+        return kind.isDimension ? (makeDimensionLayout(kind: kind, points: p)?.samples ?? []) : []
     }
 }
 
@@ -60,15 +63,13 @@ extension Shape {
     var pathMidpoint: CGPoint {
         let p = worldPoints
         if kind == .curve, p.count == 3 { return quadPoint(p[0], p[1], p[2], 0.5) }
-        if kind == .dimension, p.count == 3 {
-            let g = dimensionGeometry(p[0], p[1], p[2])
-            return CGPoint(x: (g.a2.x + g.b2.x) / 2, y: (g.a2.y + g.b2.y) / 2)
-        }
+        if let l = dimensionLayout { return l.labelAnchor }
         if p.count >= 2 { return CGPoint(x: (p[0].x + p[1].x) / 2, y: (p[0].y + p[1].y) / 2) }
         return center
     }
 
     func distanceToPath(_ q: CGPoint) -> CGFloat {
+        if let l = dimensionLayout { return l.distance(to: q) }
         let s = pathSamplesInWorld
         guard s.count >= 2 else { return .greatestFiniteMagnitude }
         var best = CGFloat.greatestFiniteMagnitude
@@ -95,8 +96,18 @@ extension DocumentStore {
     func insertPath(kind: ShapeKind, from a: CGPoint, to b: CGPoint) {
         guard kind.isPath, doc.shapes.count < DiagramIO.maxShapes else { return }
         var s = Shape(kind: kind, rect: .zero, fill: Self.defaultLineColor,
-                      line: kind == .dimension ? .dimensionDefault : .pathDefault)
-        s.setWorldPoints(Self.initialPathPoints(kind: kind, from: a, to: b))
+                      line: kind.isDimension ? .dimensionDefault : .pathDefault)
+        var points = Self.initialPathPoints(kind: kind, from: a, to: b)
+        if kind.isDimension {
+            // Cote tracée d'un point de collage à l'autre (coin, milieu, centre) : elle est collée.
+            for i in kind.gluePointIndices {
+                guard let hit = doc.nearestGlueAnchor(to: points[i], tolerance: 8 / zoom, excluding: s.id) else { continue }
+                points[i] = hit.point
+                s.glue.append(GluePoint(point: i, shape: hit.shapeID, anchor: hit.anchor))
+            }
+            points = normalizedDimensionPoints(kind: kind, points)
+        }
+        s.setWorldPoints(points)
         s.layerID = doc.activeLayerID
         doc.shapes.append(s)
         selection = [s.id]
@@ -142,18 +153,6 @@ extension Shape {
         let p = worldPoints
         guard p.count == 3 else { return nil }
         return dimensionGeometry(p[0], p[1], p[2])
-    }
-
-    /// Nouveaux points d'une cote après le déplacement d'une poignée : les extrémités gardent
-    /// le décalage, la poignée de décalage reste au milieu de la ligne de cote.
-    func dimensionPoints(moving index: Int, to q: CGPoint) -> [CGPoint] {
-        let p = worldPoints
-        guard p.count == 3, let g = dimension else { return p }
-        switch index {
-        case 0: return makeDimensionPoints(q, p[1], offset: g.offset)
-        case 1: return makeDimensionPoints(p[0], q, offset: g.offset)
-        default: return makeDimensionPoints(p[0], p[1], offset: dimensionGeometry(p[0], p[1], q).offset)
-        }
     }
 }
 

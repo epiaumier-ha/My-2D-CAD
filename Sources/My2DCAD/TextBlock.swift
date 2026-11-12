@@ -61,7 +61,7 @@ extension Shape {
 
     /// Angle du repère du texte : celui de la forme, aucun pour un trait, celui de la ligne pour une cote.
     private var textAngle: CGFloat {
-        if let g = dimension { return DiagramPainter.readableAngle(g.a2, g.b2) }
+        if let l = dimensionLayout { return l.labelAngle }
         return kind.isPath ? 0 : angle
     }
 
@@ -78,8 +78,8 @@ extension Shape {
         let angle = textAngle
         let off = textOffset
 
-        if let g = dimension {
-            let mid = CGPoint(x: (g.a2.x + g.b2.x) / 2, y: (g.a2.y + g.b2.y) / 2)
+        if let l = dimensionLayout {
+            let mid = l.labelAnchor
             let base = CGPoint(x: off.x, y: off.y - 2)
             let anchor = CGPoint(x: mid.x + base.x * cos(angle) - base.y * sin(angle),
                                  y: mid.y + base.x * sin(angle) + base.y * cos(angle))
@@ -105,7 +105,7 @@ extension Shape {
 extension Diagram {
     /// Texte affiché par une forme (mesure automatique d'une cote, « Texte » pour un texte vide).
     func labelContent(_ s: Shape) -> String {
-        if s.kind == .dimension, s.text.isEmpty, let g = s.dimension { return formatLength(g.length) }
+        if s.kind.isDimension, s.text.isEmpty { return dimensionMeasure(s) }
         if s.kind == .text && s.text.isEmpty { return "Texte" }
         return s.text
     }

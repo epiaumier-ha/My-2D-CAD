@@ -31,6 +31,9 @@ struct StatusBar: View {
     private var hint: String {
         switch store.tool {
         case .select:
+            if let s = store.singleSelectedShape, s.kind.isDimension {
+                return "Glisser une extrémité sur un coin, un milieu ou un centre pour coller la cote · Poignée ronde : position de la cote"
+            }
             return "Double-clic : texte · ⌥-glisser : dupliquer · Maj : ajouter à la sélection · Espace : déplacer la vue"
         case .pan: return "Glisser pour déplacer la vue · V : sélection"
         case .text: return "Clic ou glisser pour créer un texte · Échap : sélection"
@@ -53,7 +56,7 @@ struct StatusBar: View {
     private var selectionText: String {
         if let s = store.singleSelectedShape {
             let d = store.doc
-            if let g = s.dimension { return "Cote : " + d.formatLength(g.length) }
+            if s.kind.isDimension { return s.kind.displayName + " : " + d.dimensionMeasure(s) }
             if s.kind.isPath { return s.kind.displayName }
             let w = Diagram.format(d.measure(s.rect.width), decimals: d.precision)
             let h = Diagram.format(d.measure(s.rect.height), decimals: d.precision)

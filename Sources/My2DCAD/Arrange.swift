@@ -87,6 +87,15 @@ extension DocumentStore {
             s.rect.origin.y += offset
             newShapes.append(s)
         }
+        // Cotes collées : le collage suit la copie de la forme cible ; sans elle, la cote est décollée.
+        for i in newShapes.indices where !newShapes[i].glue.isEmpty {
+            newShapes[i].glue = newShapes[i].glue.compactMap { g in
+                guard let target = idMap[g.shape] else { return nil }
+                var copy = g
+                copy.shape = target
+                return copy
+            }
+        }
         let newConnectors = fragment.connectors.compactMap { c -> Connector? in
             guard let a = idMap[c.fromShape], let b = idMap[c.toShape] else { return nil }
             var copy = c   // conserve le style du connecteur

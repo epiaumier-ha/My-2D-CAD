@@ -30,8 +30,10 @@ enum ShapeKind: String, Codable, CaseIterable {
     case rectangle, ellipse, diamond, text
     // Tracés libres : trait (2 points) et courbe de Bézier quadratique (début, contrôle, fin)
     case line, curve
-    // Cote linéaire (2 points mesurés + point de décalage) et forme libre (tracé quelconque, import SVG)
+    // Cote linéaire alignée (2 points mesurés + point de décalage) et forme libre (tracé quelconque, import SVG)
     case dimension, freeform
+    // Cotation : cotes horizontale et verticale, angulaire, de rayon et de diamètre
+    case dimensionHorizontal, dimensionVertical, angularDimension, radiusDimension, diameterDimension
     // Organigramme
     case terminator, data, document, predefinedProcess, manualInput, preparation
     case database, offPageReference, delay, manualOperation
@@ -70,10 +72,12 @@ struct Shape: Identifiable, Codable, Equatable {
     var textOffset: CGPoint = .zero
     /// Largeur personnalisée du bloc de texte (nil : automatique).
     var textBlockWidth: Double?
+    /// Cote : extrémités collées à des points d'autres formes (suivent leurs déplacements).
+    var glue: [GluePoint] = []
 
     enum CodingKeys: String, CodingKey {
         case id, kind, rect, text, fill, rotation, points, line, textStyle, noFill, fillTransparency, layerID, groupID
-        case segments, textOffset, textBlockWidth
+        case segments, textOffset, textBlockWidth, glue
     }
 
     /// Couleur de remplissage effective (nil si aucun remplissage).
@@ -107,6 +111,7 @@ extension Shape {
         segments = try c.decodeIfPresent([PathSegment].self, forKey: .segments) ?? []
         textOffset = try c.decodeIfPresent(CGPoint.self, forKey: .textOffset) ?? .zero
         textBlockWidth = try c.decodeIfPresent(Double.self, forKey: .textBlockWidth)
+        glue = try c.decodeIfPresent([GluePoint].self, forKey: .glue) ?? []
     }
 }
 
@@ -205,6 +210,10 @@ struct Diagram: Codable, Equatable {
 
     mutating func removeItems(_ ids: Set<UUID>) {
         shapes.removeAll { ids.contains($0.id) }
+        // Cotes collées à une forme supprimée : elles restent en place, décollées.
+        for i in shapes.indices where !shapes[i].glue.isEmpty {
+            shapes[i].glue.removeAll { ids.contains($0.shape) }
+        }
         connectors.removeAll {
             ids.contains($0.id) || ids.contains($0.fromShape) || ids.contains($0.toShape)
         }

@@ -45,7 +45,10 @@ enum DiagramIO {
             throw DiagramIOError.unsupportedVersion(version)
         }
         try validate(document)
-        return document
+        // Cotes collées recalées sur leurs formes (fichier modifié ailleurs, cible disparue).
+        var resolved = document
+        for i in resolved.pages.indices { resolved.pages[i].resolveGlue(previous: nil) }
+        return resolved
     }
 
     static func save(_ document: CADDocument, to url: URL) throws {
@@ -122,6 +125,15 @@ enum DiagramIO {
                 guard s.points.count == s.kind.pointCount else {
                     throw DiagramIOError.invalid("nombre de points incorrect")
                 }
+            }
+            // Collage d'une cote : points et points de collage dans les bornes, un collage par point.
+            // Une forme cible absente est tolérée : le collage est simplement abandonné au chargement.
+            guard s.glue.isEmpty || s.kind.isDimension,
+                  s.glue.count <= s.kind.gluePointIndices.count,
+                  Set(s.glue.map(\.point)).count == s.glue.count,
+                  s.glue.allSatisfy({ s.kind.gluePointIndices.contains($0.point)
+                      && (0..<GluePoint.maxAnchors).contains($0.anchor) && $0.shape != s.id }) else {
+                throw DiagramIOError.invalid("collage de cote invalide")
             }
             guard s.textOffset.x.isFinite, s.textOffset.y.isFinite,
                   abs(s.textOffset.x) <= maxCoordinate, abs(s.textOffset.y) <= maxCoordinate,

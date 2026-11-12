@@ -31,7 +31,7 @@ enum DashPattern: String, Codable, CaseIterable, Identifiable {
 }
 
 enum ArrowHead: String, Codable, CaseIterable, Identifiable {
-    case none, open, filled, circle, diamond
+    case none, open, filled, circle, diamond, tick
 
     var id: String { rawValue }
 
@@ -42,6 +42,7 @@ enum ArrowHead: String, Codable, CaseIterable, Identifiable {
         case .filled: return "Flèche pleine"
         case .circle: return "Cercle"
         case .diamond: return "Losange"
+        case .tick: return "Trait oblique"
         }
     }
 }
@@ -91,6 +92,9 @@ struct LineStyle: Codable, Equatable {
     static let connectorDefault = LineStyle(color: RGBA(r: 0.3, g: 0.3, b: 0.3, a: 1), endArrow: .filled)
     static let dimensionDefault = LineStyle(color: RGBA(r: 0.15, g: 0.15, b: 0.15, a: 1), width: 0.75,
                                             beginArrow: .filled, endArrow: .filled, arrowSize: 0.75)
+    /// Cotation d'architecture : traits obliques aux extrémités.
+    static let architecturalDimension = LineStyle(color: RGBA(r: 0.15, g: 0.15, b: 0.15, a: 1), width: 0.75,
+                                                  beginArrow: .tick, endArrow: .tick, arrowSize: 1)
 
     enum CodingKeys: String, CodingKey {
         case color, width, dash, transparency, cap, beginArrow, endArrow, arrowSize

@@ -24,7 +24,12 @@ extension ShapeKind {
         case .text: return "Texte"
         case .line: return "Trait"
         case .curve: return "Courbe"
-        case .dimension: return "Cote"
+        case .dimension: return "Cote alignée"
+        case .dimensionHorizontal: return "Cote horizontale"
+        case .dimensionVertical: return "Cote verticale"
+        case .angularDimension: return "Cote angulaire"
+        case .radiusDimension: return "Cote de rayon"
+        case .diameterDimension: return "Cote de diamètre"
         case .freeform: return "Forme libre"
         default: return StencilCatalog.item(for: self)?.name ?? rawValue
         }
@@ -107,10 +112,27 @@ extension ShapeKind {
         case .curve:
             out.stroke.move(to: P(0, 1))
             out.stroke.addQuadCurve(to: P(1, 1), control: P(0.5, -1))
-        case .dimension:
+        case .dimension, .dimensionHorizontal:
             line(&out.stroke, P(0, 0.5), P(1, 0.5))
             line(&out.stroke, P(0, 0.2), P(0, 0.8))
             line(&out.stroke, P(1, 0.2), P(1, 0.8))
+        case .dimensionVertical:
+            line(&out.stroke, P(0.5, 0), P(0.5, 1))
+            line(&out.stroke, P(0.2, 0), P(0.8, 0))
+            line(&out.stroke, P(0.2, 1), P(0.8, 1))
+        case .angularDimension:
+            let v = P(0, 1), len = min(w * 2, h / 0.87) * 0.95
+            line(&out.stroke, v, P(1, 1))
+            line(&out.stroke, v, CGPoint(x: v.x + len * 0.5, y: v.y - len * 0.87))
+            let radius = min(len * 0.6, w * 0.9)
+            out.stroke.addLines((0...12).map { i in
+                let t = -CGFloat(i) / 12 * .pi / 3
+                return CGPoint(x: v.x + radius * cos(t), y: v.y + radius * sin(t))
+            })
+        case .radiusDimension, .diameterDimension:
+            let c = CGRect(x: r.midX - m / 2, y: r.midY - m / 2, width: m, height: m)
+            out.stroke.addEllipse(in: c)
+            line(&out.stroke, self == .radiusDimension ? P(0.5, 0.5) : CGPoint(x: c.minX, y: c.midY), CGPoint(x: c.maxX, y: c.midY))
         case .freeform:
             out.fill = Path(r)
         case .ellipse:

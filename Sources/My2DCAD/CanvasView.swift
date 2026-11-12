@@ -61,6 +61,9 @@ struct CanvasView: View {
     @State private var guides: [AlignmentGuide] = []
     /// Rectangles des autres formes, cibles des repères (calculés au début du geste).
     @State private var guideTargets: [CGRect] = []
+    /// Point de collage visé par l'extrémité de cote déplacée, et forme dont les points de collage sont montrés.
+    @State private var glueCandidate: GlueCandidate?
+    @State private var glueHoverShape: UUID?
 
     /// Moteur de dessin de la page affichée.
     private var painter: DiagramPainter {
@@ -369,10 +372,25 @@ struct CanvasView: View {
             var pts = store.doc.shapes[i].worldPoints
             guard pts.indices.contains(index) else { return }
             let shape = store.doc.shapes[i]
-            let isControl = (shape.kind == .curve && index == 1) || (shape.kind == .dimension && index == 2)
-            let q = isControl ? w : snapPoint(w)
-            if shape.kind == .dimension {
-                store.doc.shapes[i].setWorldPoints(shape.dimensionPoints(moving: index, to: q))
+            let isControl = shape.kind.controlPointIndex == index
+            var q = isControl ? w : snapPoint(w)
+            if shape.kind.isDimension {
+                // Extrémité d'une cote : collage au point le plus proche d'une forme (coin, milieu, centre).
+                glueCandidate = nil
+                if shape.kind.gluePointIndices.contains(index),
+                   let hit = store.doc.nearestGlueAnchor(to: w, tolerance: 10 / store.zoom, excluding: shape.id) {
+                    q = hit.point
+                    glueCandidate = hit
+                }
+                glueHoverShape = glueCandidate?.shapeID
+                    ?? store.hitShape(at: w, includePaths: false).flatMap { $0.kind.isDimension ? nil : $0.id }
+                var updated = shape
+                updated.setWorldPoints(shape.dimensionPoints(moving: index, to: q))
+                updated.glue.removeAll { $0.point == index }
+                if let hit = glueCandidate {
+                    updated.glue.append(GluePoint(point: index, shape: hit.shapeID, anchor: hit.anchor))
+                }
+                store.doc.shapes[i] = updated
             } else {
                 pts[index] = q
                 store.doc.shapes[i].setWorldPoints(pts)
@@ -430,6 +448,8 @@ struct CanvasView: View {
         defer {
             interaction = nil
             guides = []
+            glueCandidate = nil
+            glueHoverShape = nil
             store.commitTransaction()
         }
         guard let current = interaction else { return }
@@ -723,10 +743,11 @@ struct CanvasView: View {
             }
             for (i, p) in pts.enumerated() {
                 let box = CGRect(x: p.x - 4.5, y: p.y - 4.5, width: 9, height: 9)
-                let isControl = (s.kind == .curve && i == 1) || (s.kind == .dimension && i == 2)
-                let handle = isControl ? Path(ellipseIn: box) : Path(box)
-                ctx.fill(handle, with: .color(.white))
-                ctx.stroke(handle, with: .color(accent), lineWidth: 1.5)
+                let handle = s.kind.controlPointIndex == i ? Path(ellipseIn: box) : Path(box)
+                // Extrémité collée : poignée verte, comme dans Visio.
+                let glued = s.glue.contains { $0.point == i }
+                ctx.fill(handle, with: .color(glued ? .green : .white))
+                ctx.stroke(handle, with: .color(glued ? Color(red: 0, green: 0.45, blue: 0) : accent), lineWidth: 1.5)
             }
             return
         }
@@ -760,6 +781,22 @@ struct CanvasView: View {
         guard let interaction else { return }
         let dashed = StrokeStyle(lineWidth: 1.5, dash: [5, 3])
         switch interaction {
+        case .editingPoint:
+            // Points de collage de la forme visée ; celui qui est retenu est entouré.
+            if let id = glueHoverShape, let target = store.doc.shape(id) {
+                var marks = Path()
+                for p in target.glueAnchors.map({ store.toScreen($0) }) {
+                    marks.move(to: CGPoint(x: p.x - 3, y: p.y - 3)); marks.addLine(to: CGPoint(x: p.x + 3, y: p.y + 3))
+                    marks.move(to: CGPoint(x: p.x - 3, y: p.y + 3)); marks.addLine(to: CGPoint(x: p.x + 3, y: p.y - 3))
+                }
+                ctx.stroke(marks, with: .color(.blue.opacity(0.7)), lineWidth: 1)
+            }
+            if let hit = glueCandidate {
+                let p = store.toScreen(hit.point)
+                let ring = Path(ellipseIn: CGRect(x: p.x - 7, y: p.y - 7, width: 14, height: 14))
+                ctx.stroke(ring, with: .color(.green), lineWidth: 2)
+            }
+
         case .drawing(let kind, let start, let end) where kind.isPath:
             let pts = DocumentStore.initialPathPoints(kind: kind, from: start, to: end)
             ctx.stroke(painter.screenPath(kind: kind, points: pts), with: .color(accent), style: dashed)

@@ -97,7 +97,12 @@ final class DocumentStore: ObservableObject {
     /// Page affichée : toutes les opérations d'édition portent sur elle.
     var doc: Diagram {
         get { document.pages[currentPage] }
-        set { document.pages[currentPage] = newValue }
+        set {
+            // Les cotes collées suivent leurs formes à chaque modification de la page.
+            var d = newValue
+            d.resolveGlue(previous: document.pages[currentPage])
+            document.pages[currentPage] = d
+        }
     }
     @Published var selection: Set<UUID> = []
     @Published var tool: Tool = .select {
@@ -384,7 +389,7 @@ final class DocumentStore: ObservableObject {
         if let direct { return direct }
         // Un clic sur le texte d'une forme (déplacé, ou sous une icône) sélectionne la forme.
         return d.shapes.last { s in
-            guard d.isSelectable(s), includePaths || !s.kind.isPath, !s.text.isEmpty || s.kind == .dimension else { return false }
+            guard d.isSelectable(s), includePaths || !s.kind.isPath, !s.text.isEmpty || s.kind.isDimension else { return false }
             return d.textFrame(s)?.contains(world, margin: 2) ?? false
         }
     }

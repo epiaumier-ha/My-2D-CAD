@@ -5,8 +5,12 @@ struct StencilItem: Identifiable {
     let name: String
     let size: CGSize
     var defaultText = ""
+    /// Style de trait imposé (cotes d'ingénierie ou d'architecture).
+    var line: LineStyle?
+    /// Variante d'un même type (plusieurs éléments peuvent partager un type de forme).
+    var variant = ""
 
-    var id: ShapeKind { kind }
+    var id: String { variant.isEmpty ? kind.rawValue : kind.rawValue + "." + variant }
 }
 
 struct StencilLibrary: Identifiable {
@@ -24,6 +28,27 @@ enum StencilCatalog {
                              text: String = "") -> StencilItem {
         StencilItem(kind: kind, name: name, size: CGSize(width: w, height: h), defaultText: text)
     }
+
+    private static func dimension(_ kind: ShapeKind, _ name: String, _ w: CGFloat, _ h: CGFloat,
+                                  architectural: Bool) -> StencilItem {
+        var line = architectural ? LineStyle.architecturalDimension : LineStyle.dimensionDefault
+        // Rayon : une seule flèche, sur le cercle.
+        if kind == .radiusDimension { line.beginArrow = .none }
+        return StencilItem(kind: kind, name: name + (architectural ? " (architecture)" : " (ingénierie)"),
+                           size: CGSize(width: w, height: h), line: line,
+                           variant: architectural ? "architecture" : "ingenierie")
+    }
+
+    /// Cotation, comme la bibliothèque de Visio : chaque cote existe en style ingénierie (flèches)
+    /// et architecture (traits obliques).
+    private static let dimensionItems: [StencilItem] = [false, true].flatMap { arch in [
+        dimension(.dimensionHorizontal, "Horizontale", 120, 40, architectural: arch),
+        dimension(.dimensionVertical, "Verticale", 40, 120, architectural: arch),
+        dimension(.dimension, "Alignée", 120, 60, architectural: arch),
+        dimension(.angularDimension, "Angulaire", 100, 80, architectural: arch),
+        dimension(.radiusDimension, "Rayon", 80, 80, architectural: arch),
+        dimension(.diameterDimension, "Diamètre", 80, 80, architectural: arch),
+    ] }
 
     static let libraries: [StencilLibrary] = [
         StencilLibrary(id: "flowchart", name: "Organigramme", symbol: "flowchart", items: [
@@ -65,6 +90,7 @@ enum StencilCatalog {
             item(.motor, "Moteur", 80, 40, text: "M"),
             item(.ground, "Terre", 40, 40),
         ]),
+        StencilLibrary(id: "dimensions", name: "Cotation", symbol: "ruler", items: dimensionItems),
     ]
 
     static func item(for kind: ShapeKind) -> StencilItem? {
@@ -74,13 +100,27 @@ enum StencilCatalog {
         return nil
     }
 
-    static func dragPayload(_ item: StencilItem) -> String { dragPrefix + item.kind.rawValue }
+    static func dragPayload(_ item: StencilItem) -> String { dragPrefix + item.id }
 
     /// Les données glissées peuvent venir d'une autre application : on n'accepte qu'un identifiant connu.
     static func item(fromDragPayload payload: String) -> StencilItem? {
         guard payload.count <= 100, payload.hasPrefix(dragPrefix) else { return nil }
-        guard let kind = ShapeKind(rawValue: String(payload.dropFirst(dragPrefix.count))) else { return nil }
-        return item(for: kind)
+        let id = String(payload.dropFirst(dragPrefix.count))
+        for library in libraries {
+            if let found = library.items.first(where: { $0.id == id }) { return found }
+        }
+        return nil
+    }
+
+    /// Forme prête à insérer dans le cadre r (une cote reçoit ses points et son style).
+    static func makeShape(_ item: StencilItem, in r: CGRect) -> Shape {
+        var shape = Shape(kind: item.kind, rect: r, text: item.defaultText)
+        if let line = item.line { shape.line = line }
+        if item.kind.isDimension {
+            shape.fill = RGBA(r: 0.2, g: 0.2, b: 0.2, a: 1)
+            shape.setWorldPoints(initialDimensionPoints(kind: item.kind, in: r))
+        }
+        return shape
     }
 }
 
@@ -96,7 +136,7 @@ extension DocumentStore {
         guard doc.shapes.count < DiagramIO.maxShapes,
               center.x.isFinite, center.y.isFinite, abs(center.x) < limit, abs(center.y) < limit else { return }
         let origin = snap(CGPoint(x: center.x - item.size.width / 2, y: center.y - item.size.height / 2))
-        var shape = Shape(kind: item.kind, rect: CGRect(origin: origin, size: item.size), text: item.defaultText)
+        var shape = StencilCatalog.makeShape(item, in: CGRect(origin: origin, size: item.size))
         shape.layerID = doc.activeLayerID
         perform { $0.shapes.append(shape) }
         selection = [shape.id]
@@ -192,8 +232,12 @@ struct StencilPreview: View {
             let scale = min(size.width / item.size.width, size.height / item.size.height) * 0.9
             let w = item.size.width * scale, h = item.size.height * scale
             let r = CGRect(x: (size.width - w) / 2, y: (size.height - h) / 2, width: w, height: h)
-            let parts = item.kind.paths(in: r)
             let line = GraphicsContext.Shading.color(.primary)
+            if item.kind.isDimension {
+                drawDimension(&ctx, in: r, shading: line)
+                return
+            }
+            let parts = item.kind.paths(in: r)
             if !parts.fill.isEmpty {
                 ctx.fill(parts.fill, with: .color(RGBA.defaultFill.color))
                 ctx.stroke(parts.fill, with: line, lineWidth: 1)
@@ -201,6 +245,30 @@ struct StencilPreview: View {
             if !parts.stroke.isEmpty {
                 ctx.stroke(parts.stroke, with: line, style: StrokeStyle(lineWidth: 1, lineCap: .round, lineJoin: .round))
             }
+        }
+    }
+
+    /// Miniature d'une cote : le vrai tracé (flèches ou traits obliques), avec le cercle coté
+    /// pour le rayon et le diamètre.
+    private func drawDimension(_ ctx: inout GraphicsContext, in r: CGRect, shading: GraphicsContext.Shading) {
+        let shape = StencilCatalog.makeShape(item, in: r.insetBy(dx: 4, dy: 4))
+        guard let l = shape.dimensionLayout else { return }
+        var path = Path()
+        for (a, b) in l.extensionLines {
+            path.move(to: a)
+            path.addLine(to: b)
+        }
+        path.addLines(l.line)
+        let p = shape.worldPoints
+        if shape.kind == .radiusDimension || shape.kind == .diameterDimension, p.count == 2 {
+            let rad = p[0].distance(to: p[1])
+            ctx.stroke(Path(ellipseIn: CGRect(x: p[0].x - rad, y: p[0].y - rad, width: 2 * rad, height: 2 * rad)),
+                       with: .color(.secondary), lineWidth: 0.75)
+        }
+        ctx.stroke(path, with: shading, lineWidth: 1)
+        for (type, end) in [(shape.line.beginArrow, l.begin), (shape.line.endArrow, l.end)] {
+            guard let end, let head = arrowHead(type, tip: end.tip, from: end.from, size: 6) else { continue }
+            if head.filled { ctx.fill(head.path, with: shading) } else { ctx.stroke(head.path, with: shading, lineWidth: 1.2) }
         }
     }
 }

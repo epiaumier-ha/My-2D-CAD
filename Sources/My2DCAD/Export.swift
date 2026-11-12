@@ -30,7 +30,7 @@ enum DiagramExporter {
         for s in page.shapes where painter.isDrawn(s) {
             var b = s.bounds
             // Bloc de texte (éventuellement déplacé hors de la forme).
-            if !s.text.isEmpty || s.kind == .dimension, let tf = page.textFrame(s) { b = b.union(tf.bounds) }
+            if !s.text.isEmpty || s.kind.isDimension, let tf = page.textFrame(s) { b = b.union(tf.bounds) }
             bounds = bounds.map { $0.union(b) } ?? b
         }
         for c in page.connectors where painter.isDrawn(c) {

@@ -43,28 +43,26 @@ enum SVGExporter {
 
     private static func shapeElement(_ s: Shape, painter: DiagramPainter) -> String {
         var out = ""
-        if let g = s.dimension {
+        if let l = s.dimensionLayout {
             if s.line.dash != .none {
-                let len = g.a.distance(to: g.a2)
                 var p = Path()
-                if len > 0.5 {
-                    let ux = (g.a2.x - g.a.x) / len, uy = (g.a2.y - g.a.y) / len
-                    p.move(to: CGPoint(x: g.a.x + ux * 2, y: g.a.y + uy * 2))
-                    p.addLine(to: CGPoint(x: g.a2.x + ux * 4, y: g.a2.y + uy * 4))
-                    p.move(to: CGPoint(x: g.b.x + ux * 2, y: g.b.y + uy * 2))
-                    p.addLine(to: CGPoint(x: g.b2.x + ux * 4, y: g.b2.y + uy * 4))
+                for (a, b) in l.extensionLines {
+                    p.move(to: a)
+                    p.addLine(to: b)
                 }
-                p.move(to: g.a2)
-                p.addLine(to: g.b2)
+                if let first = l.line.first {
+                    p.move(to: first)
+                    for q in l.line.dropFirst() { p.addLine(to: q) }
+                }
                 out += pathElement(p, fill: nil, stroke: s.line)
             }
-            out += arrow(s.line.beginArrow, tip: g.a2, from: g.b2, style: s.line)
-            out += arrow(s.line.endArrow, tip: g.b2, from: g.a2, style: s.line)
-            let mid = CGPoint(x: (g.a2.x + g.b2.x) / 2, y: (g.a2.y + g.b2.y) / 2)
-            let angle = DiagramPainter.readableAngle(g.a2, g.b2) * 180 / .pi
-            out += "<g transform=\"rotate(\(n(angle)) \(n(mid.x)) \(n(mid.y)))\">"
+            if let b = l.begin { out += arrow(s.line.beginArrow, tip: b.tip, from: b.from, style: s.line) }
+            if let e = l.end { out += arrow(s.line.endArrow, tip: e.tip, from: e.from, style: s.line) }
+            let anchor = l.labelAnchor
+            let angle = l.labelAngle * 180 / .pi
+            out += "<g transform=\"rotate(\(n(angle)) \(n(anchor.x)) \(n(anchor.y)))\">"
             out += textElement(painter.dimensionText(s), style: s.textStyle, anchor: "middle",
-                               x: mid.x + s.textOffset.x, firstBaseline: mid.y - 3 + s.textOffset.y)
+                               x: anchor.x + s.textOffset.x, firstBaseline: anchor.y - 3 + s.textOffset.y)
             out += "</g>\n"
             return out
         }

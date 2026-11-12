@@ -39,6 +39,16 @@ struct InspectorView: View {
         store.doc.connectors.filter { store.selection.contains($0.id) }
     }
 
+    /// État du collage d'une cote : libre, ou nombre d'extrémités collées.
+    private func glueDescription(_ s: Shape) -> String {
+        let total = s.kind.gluePointIndices.count
+        switch s.glue.count {
+        case 0: return "Libre"
+        case total: return "Collée"
+        default: return "Collée (\(s.glue.count) sur \(total))"
+        }
+    }
+
     private func placeholder(_ message: String) -> some View {
         Section {
             Text(message).foregroundStyle(.secondary)
@@ -52,9 +62,14 @@ struct InspectorView: View {
         if let s = store.singleSelectedShape {
             Section("Forme") {
                 LabeledContent("Type", value: s.kind.displayName)
-                if let g = s.dimension {
-                    LabeledContent("Mesure", value: store.doc.formatLength(g.length))
-                    Text("Le texte saisi remplace la mesure ; laissez-le vide pour la mesure automatique.")
+                if s.kind.isDimension {
+                    LabeledContent("Mesure", value: store.doc.dimensionMeasure(s))
+                    LabeledContent("Collage", value: glueDescription(s))
+                    if !s.glue.isEmpty {
+                        Button("Décoller la cote") { store.unglueSelection() }
+                    }
+                    Text("Le texte saisi remplace la mesure ; laissez-le vide pour la mesure automatique. "
+                         + "Glissez une extrémité sur un coin, un milieu ou le centre d'une forme pour la coller.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

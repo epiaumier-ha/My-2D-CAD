@@ -207,7 +207,10 @@ final class StencilTests: XCTestCase {
 
     func testCatalogIsConsistent() {
         let items = StencilCatalog.libraries.flatMap(\.items)
-        XCTAssertEqual(Set(items.map(\.kind)).count, items.count, "type présent dans deux bibliothèques")
+        XCTAssertEqual(Set(items.map(\.id)).count, items.count, "élément présent deux fois")
+        // Hors cotation (variantes ingénierie / architecture), un type n'apparaît qu'une fois.
+        let plain = items.filter { !$0.kind.isDimension }
+        XCTAssertEqual(Set(plain.map(\.kind)).count, plain.count, "type présent dans deux bibliothèques")
         for item in items {
             XCTAssertGreaterThan(item.size.width, 0)
             XCTAssertGreaterThan(item.size.height, 0)
@@ -238,7 +241,7 @@ final class StencilTests: XCTestCase {
 
     func testStencilShapesSurviveSaveAndLoad() throws {
         let shapes = StencilCatalog.libraries.flatMap(\.items).map {
-            Shape(kind: $0.kind, rect: CGRect(origin: .zero, size: $0.size), text: $0.defaultText)
+            StencilCatalog.makeShape($0, in: CGRect(origin: .zero, size: $0.size))
         }
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("stencils-\(UUID().uuidString).cad2d")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -996,5 +999,189 @@ final class TextBlockTests: XCTestCase {
         let bounds = DiagramExporter.contentBounds(Diagram(shapes: [s]))!
         XCTAssertGreaterThan(bounds.maxY, 220, "le texte déplacé est dans la zone exportée")
         XCTAssertTrue(SVGExporter.svg(for: Diagram(shapes: [s])).contains("Loin"))
+    }
+}
+
+@MainActor
+final class DimensionTests: XCTestCase {
+    private func points(_ s: Shape) -> [CGPoint] { s.worldPoints }
+
+    /// Page avec un rectangle (0, 0, 100 × 50) et une cote horizontale collée à ses coins supérieurs,
+    /// ligne de cote 20 au-dessus.
+    private func gluedStore() -> (DocumentStore, rect: UUID, dim: UUID) {
+        let store = DocumentStore()
+        let rect = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 100, height: 50))
+        var dim = Shape(kind: .dimensionHorizontal, rect: .zero, line: .dimensionDefault)
+        dim.setWorldPoints([CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0), CGPoint(x: 50, y: -20)])
+        dim.glue = [GluePoint(point: 0, shape: rect.id, anchor: 0), GluePoint(point: 1, shape: rect.id, anchor: 1)]
+        store.perform { $0.shapes = [rect, dim] }
+        return (store, rect.id, dim.id)
+    }
+
+    func testLayoutsAndMeasures() {
+        var d = Diagram()
+        var h = Shape(kind: .dimensionHorizontal, rect: .zero)
+        h.setWorldPoints([CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 50), CGPoint(x: 50, y: -20)])
+        XCTAssertEqual(h.dimensionLayout!.value, 100, accuracy: 1e-9)
+        XCTAssertEqual(h.dimensionLayout!.line, [CGPoint(x: 0, y: -20), CGPoint(x: 100, y: -20)])
+        var v = Shape(kind: .dimensionVertical, rect: .zero)
+        v.setWorldPoints([CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 50), CGPoint(x: -20, y: 25)])
+        XCTAssertEqual(v.dimensionLayout!.value, 50, accuracy: 1e-9)
+        XCTAssertEqual(v.dimensionLayout!.labelAngle, -.pi / 2, accuracy: 1e-9, "texte vertical lu de bas en haut")
+        var a = Shape(kind: .angularDimension, rect: .zero)
+        a.setWorldPoints(normalizedDimensionPoints(kind: .angularDimension,
+            [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0), CGPoint(x: 0, y: -100), CGPoint(x: 40, y: 0)]))
+        XCTAssertEqual(a.dimensionLayout!.value, 90, accuracy: 1e-9)
+        XCTAssertEqual(a.worldPoints[3].distance(to: .zero), 40, accuracy: 1e-9, "rayon de l'arc conservé")
+        XCTAssertEqual(d.dimensionMeasure(a), "90,0°")
+        var r = Shape(kind: .radiusDimension, rect: .zero)
+        r.setWorldPoints([CGPoint(x: 0, y: 0), CGPoint(x: 72, y: 0)])
+        XCTAssertEqual(d.dimensionMeasure(r), "R 25,4 mm")
+        var dia = Shape(kind: .diameterDimension, rect: .zero)
+        dia.setWorldPoints([CGPoint(x: 0, y: 0), CGPoint(x: 0, y: 36)])
+        XCTAssertEqual(d.dimensionMeasure(dia), "Ø 25,4 mm")
+        XCTAssertEqual(dia.dimensionLayout!.line.first!.y, -36, accuracy: 1e-9, "le diamètre traverse le cercle")
+        d.shapes = [h, v, a, r, dia]
+        XCTAssertNoThrow(try DiagramIO.validate(d))
+        let svg = SVGExporter.svg(for: d)
+        XCTAssertTrue(svg.contains("R 25,4 mm") && svg.contains("90,0°"))
+    }
+
+    func testGluedDimensionFollowsMoveAndResize() {
+        let (store, rectID, dimID) = gluedStore()
+        func dim() -> Shape { store.doc.shape(dimID)! }
+        store.perform { d in
+            let i = d.shapes.firstIndex { $0.id == rectID }!
+            d.shapes[i].rect.origin.x += 30
+        }
+        XCTAssertEqual(points(dim())[0].x, 30, accuracy: 1e-9)
+        XCTAssertEqual(points(dim())[2].y, -20, accuracy: 1e-9)
+        store.perform { d in
+            let i = d.shapes.firstIndex { $0.id == rectID }!
+            d.shapes[i].rect.size.width = 150
+            d.shapes[i].rect.origin.y += 10
+        }
+        XCTAssertEqual(dim().dimensionLayout!.value, 150, accuracy: 1e-9, "la mesure suit le redimensionnement")
+        XCTAssertEqual(points(dim())[2].y, -10, accuracy: 1e-9, "la ligne de cote garde son écart")
+        XCTAssertEqual(dim().glue.count, 2)
+        store.undo()
+        XCTAssertEqual(dim().dimensionLayout!.value, 100, accuracy: 1e-9)
+    }
+
+    func testRotatedTargetAndAlignedDimension() {
+        let store = DocumentStore()
+        let rect = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 100, height: 40))
+        var dim = Shape(kind: .dimension, rect: .zero, line: .dimensionDefault)
+        dim.setWorldPoints(makeDimensionPoints(CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0), offset: 15))
+        dim.glue = [GluePoint(point: 0, shape: rect.id, anchor: 0), GluePoint(point: 1, shape: rect.id, anchor: 1)]
+        store.perform { $0.shapes = [rect, dim] }
+        store.perform { $0.shapes[0].rotation = 30 }
+        let g = store.doc.shapes[1].dimension!
+        XCTAssertEqual(g.length, 100, accuracy: 1e-6, "la longueur du côté pivoté reste 100")
+        XCTAssertEqual(g.offset, 15, accuracy: 1e-6)
+    }
+
+    func testMovingDimensionAloneUnglues() {
+        let (store, _, dimID) = gluedStore()
+        store.selection = [dimID]
+        store.nudgeSelection(dx: 0, dy: 5)
+        let d = store.doc.shape(dimID)!
+        XCTAssertTrue(d.glue.isEmpty, "une cote déplacée seule est décollée")
+        XCTAssertEqual(points(d)[0].y, 5, accuracy: 1e-9)
+    }
+
+    func testMovingBothKeepsGlue() {
+        let (store, rectID, dimID) = gluedStore()
+        store.selection = [rectID, dimID]
+        store.nudgeSelection(dx: 7, dy: 3)
+        XCTAssertEqual(store.doc.shape(dimID)!.glue.count, 2)
+        XCTAssertEqual(points(store.doc.shape(dimID)!)[1], CGPoint(x: 107, y: 3))
+    }
+
+    func testDeletingTargetUnglues() {
+        let (store, rectID, dimID) = gluedStore()
+        store.selection = [rectID]
+        store.deleteSelection()
+        XCTAssertTrue(store.doc.shape(dimID)!.glue.isEmpty)
+        XCTAssertNoThrow(try DiagramIO.validate(store.doc))
+    }
+
+    func testDuplicateRemapsGlue() {
+        let (store, rectID, dimID) = gluedStore()
+        store.selection = [rectID, dimID]
+        store.duplicateSelection()
+        let copies = store.selectedShapes
+        let newRect = copies.first { $0.kind == .rectangle }!
+        let newDim = copies.first { $0.kind == .dimensionHorizontal }!
+        XCTAssertEqual(Set(newDim.glue.map(\.shape)), [newRect.id], "la copie est collée à la copie de la forme")
+        store.selection = [dimID]
+        store.duplicateSelection()
+        XCTAssertTrue(store.selectedShapes[0].glue.isEmpty, "copie seule : décollée")
+    }
+
+    func testDrawingDimensionBetweenCornersGlues() {
+        let store = DocumentStore()
+        store.perform { $0.shapes = [Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 100, height: 50))] }
+        store.beginTransaction()
+        store.insertPath(kind: .dimension, from: CGPoint(x: 2, y: 1), to: CGPoint(x: 99, y: 0))
+        store.commitTransaction()
+        let dim = store.doc.shapes[1]
+        XCTAssertEqual(dim.glue.count, 2)
+        XCTAssertEqual(dim.dimension!.length, 100, accuracy: 1e-9)
+    }
+
+    func testEditingHandles() {
+        var a = Shape(kind: .angularDimension, rect: .zero)
+        a.setWorldPoints(initialDimensionPoints(kind: .angularDimension, in: CGRect(x: 0, y: 0, width: 100, height: 80)))
+        let r = a.worldPoints[0].distance(to: a.worldPoints[3])
+        let moved = a.dimensionPoints(moving: 1, to: CGPoint(x: 0, y: 200))
+        XCTAssertEqual(moved[0].distance(to: moved[3]), r, accuracy: 1e-9, "déplacer une branche garde le rayon de l'arc")
+        var h = Shape(kind: .dimensionHorizontal, rect: .zero)
+        h.setWorldPoints([CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0), CGPoint(x: 50, y: -20)])
+        let p = h.dimensionPoints(moving: 1, to: CGPoint(x: 60, y: 30))
+        XCTAssertEqual(p[2], CGPoint(x: 30, y: -20), "la ligne de cote reste en place, poignée au milieu")
+    }
+
+    func testGluePersistenceAndValidation() throws {
+        let (store, rectID, _) = gluedStore()
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("glue-\(UUID().uuidString).cad2d")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try DiagramIO.save(store.doc, to: url)
+        XCTAssertEqual(try DiagramIO.load(from: url).pages[0], store.doc)
+
+        var bad = store.doc
+        bad.shapes[1].glue.append(GluePoint(point: 2, shape: rectID, anchor: 0))
+        XCTAssertThrowsError(try DiagramIO.validate(bad), "la poignée de la ligne de cote ne se colle pas")
+        bad = store.doc
+        bad.shapes[1].glue[0].anchor = 99
+        XCTAssertThrowsError(try DiagramIO.validate(bad))
+        bad = store.doc
+        bad.shapes[0].glue = [GluePoint(point: 0, shape: rectID, anchor: 0)]
+        XCTAssertThrowsError(try DiagramIO.validate(bad), "seules les cotes se collent")
+
+        // Forme cible absente du fichier : la cote se charge, décollée.
+        var orphan = store.doc
+        orphan.shapes.removeFirst()
+        try DiagramIO.save(orphan, to: url)
+        XCTAssertTrue(try DiagramIO.load(from: url).pages[0].shapes[0].glue.isEmpty)
+    }
+
+    func testDimensionStencils() {
+        let library = StencilCatalog.libraries.first { $0.id == "dimensions" }!
+        XCTAssertEqual(library.name, "Cotation")
+        XCTAssertEqual(library.items.count, 12)
+        let store = DocumentStore()
+        for item in library.items {
+            store.insertStencil(item, centeredAt: CGPoint(x: 200, y: 200))
+            XCTAssertEqual(StencilCatalog.item(fromDragPayload: StencilCatalog.dragPayload(item))?.id, item.id)
+        }
+        XCTAssertEqual(store.doc.shapes.count, 12)
+        XCTAssertTrue(store.doc.shapes.allSatisfy { $0.dimensionLayout != nil })
+        XCTAssertNoThrow(try DiagramIO.validate(store.doc))
+        let ticks = store.doc.shapes.filter { $0.line.endArrow == .tick }
+        XCTAssertEqual(ticks.count, 6, "une variante architecture par type")
+        let tick = arrowHead(.tick, tip: .zero, from: CGPoint(x: -10, y: 0), size: 8)!
+        XCTAssertFalse(tick.filled)
+        XCTAssertEqual(tick.path.boundingRect.width, 8 * 0.5.squareRoot(), accuracy: 1e-6, "trait à 45°")
     }
 }
