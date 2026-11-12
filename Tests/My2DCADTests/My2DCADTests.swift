@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import My2DCAD
 
 final class GeometryTests: XCTestCase {
