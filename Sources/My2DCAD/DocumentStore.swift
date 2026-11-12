@@ -455,9 +455,8 @@ final class DocumentStore: ObservableObject {
     }
 
     func fitToContent() {
-        let visible = doc.shapes.filter { doc.isVisible($0) }
-        guard let first = visible.first else { resetView(); return }
-        let bounds = visible.dropFirst().reduce(first.bounds) { $0.union($1.bounds) }
+        // Comme « Ajuster à la fenêtre » de Visio : toute la feuille, et le dessin qui en dépasse.
+        let bounds = doc.shapes.filter { doc.isVisible($0) }.reduce(doc.sheetRect) { $0.union($1.bounds) }
         let pad: CGFloat = 40
         let availW = max(canvasSize.width - 2 * pad, 50)
         let availH = max(canvasSize.height - 2 * pad, 50)

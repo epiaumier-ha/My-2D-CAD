@@ -1,5 +1,6 @@
 import XCTest
 import struct SwiftUI.Path
+import PDFKit
 @testable import My2DCAD
 
 final class GeometryTests: XCTestCase {
@@ -1502,5 +1503,99 @@ final class AssistantTests: XCTestCase {
         session.send("Encore", engine: next)
         await wait(session)
         XCTAssertEqual(next.requests.first?.count, 1)
+    }
+}
+
+@MainActor
+final class SheetTests: XCTestCase {
+    func testPaperSizesAndOrientation() {
+        var setup = PageSetup()
+        XCTAssertEqual(setup.paper, .a4)
+        XCTAssertEqual(setup.orientation, .landscape)
+        XCTAssertEqual(setup.millimetres, CGSize(width: 297, height: 210))
+        XCTAssertEqual(setup.size.width, 297 * 72 / 25.4, accuracy: 1e-9)
+        setup.orientation = .portrait
+        XCTAssertEqual(setup.millimetres, CGSize(width: 210, height: 297))
+        setup.paper = .a2
+        XCTAssertEqual(setup.millimetres, CGSize(width: 420, height: 594))
+        setup.paper = .a5
+        setup.orientation = .landscape
+        XCTAssertEqual(setup.summary, "A5 paysage")
+        setup.paper = .custom
+        setup.customWidth = 500
+        setup.customHeight = 300
+        XCTAssertEqual(setup.millimetres, CGSize(width: 500, height: 300))
+        XCTAssertEqual(setup.summary, "500 × 300 mm")
+    }
+
+    func testSheetIsSavedValidatedAndDefaultedForOldFiles() throws {
+        var d = Diagram()
+        d.pageSetup.paper = .a3
+        d.pageSetup.orientation = .portrait
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("sheet-\(UUID().uuidString).cad2d")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try DiagramIO.save(d, to: url)
+        XCTAssertEqual(try DiagramIO.load(from: url).pages[0].pageSetup, d.pageSetup)
+
+        var bad = d
+        bad.pageSetup.customWidth = 2
+        XCTAssertThrowsError(try DiagramIO.validate(bad))
+        bad.pageSetup.customWidth = .nan
+        XCTAssertThrowsError(try DiagramIO.validate(bad))
+
+        let old = try JSONDecoder().decode(Diagram.self, from: Data(#"{"shapes":[],"connectors":[]}"#.utf8))
+        XCTAssertEqual(old.pageSetup, PageSetup(), "ancien fichier : A4 paysage")
+    }
+
+    func testFitSheetToDrawingMovesDrawingAndResizesSheet() {
+        let store = DocumentStore()
+        let a = Shape(kind: .rectangle, rect: CGRect(x: -100, y: 50, width: 200, height: 100))
+        let b = Shape(kind: .rectangle, rect: CGRect(x: 900, y: 700, width: 100, height: 100))
+        store.perform { $0.shapes = [a, b]; $0.guides = [GuideLine(vertical: true, position: 0)] }
+        store.fitSheetToDrawing()
+        let margin = 10 / Diagram.millimetresPerWorldUnit
+        let d = store.doc
+        XCTAssertEqual(d.shapes[0].rect.minX, margin, accuracy: 1e-9)
+        XCTAssertEqual(d.shapes[0].rect.minY, margin, accuracy: 1e-9)
+        XCTAssertEqual(d.guides[0].position, 100 + margin, accuracy: 1e-9)
+        XCTAssertEqual(d.pageSetup.paper, .custom)
+        XCTAssertEqual(d.pageSetup.orientation, .landscape)
+        XCTAssertTrue(d.sheetRect.contains(d.shapes[1].bounds), "tout le dessin tient sur la feuille")
+        XCTAssertNoThrow(try DiagramIO.validate(d))
+        store.undo()
+        XCTAssertEqual(store.doc.shapes[0].rect.minX, -100)
+        XCTAssertEqual(store.doc.pageSetup, PageSetup())
+    }
+
+    func testPDFPagesUseTheSheet() throws {
+        var doc = CADDocument()
+        doc.pages[0].shapes = [Shape(kind: .rectangle, rect: CGRect(x: 10, y: 10, width: 50, height: 50))]
+        var second = Diagram()
+        second.pageSetup.paper = .a3
+        second.pageSetup.orientation = .portrait
+        doc.pages.append(second)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("sheet-\(UUID().uuidString).pdf")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try DiagramExporter.writePDF(doc, to: url)
+        let pdf = try XCTUnwrap(PDFDocument(url: url))
+        XCTAssertEqual(pdf.pageCount, 2)
+        let first = try XCTUnwrap(pdf.page(at: 0)).bounds(for: .mediaBox)
+        XCTAssertEqual(first.width, 297 * 72 / 25.4, accuracy: 0.5)
+        XCTAssertEqual(first.height, 210 * 72 / 25.4, accuracy: 0.5)
+        let a3 = try XCTUnwrap(pdf.page(at: 1)).bounds(for: .mediaBox)
+        XCTAssertEqual(a3.height, 420 * 72 / 25.4, accuracy: 0.5)
+    }
+
+    func testAssistantCanSetTheSheet() {
+        let store = DocumentStore()
+        let tools = AssistantToolbox(store: store)
+        var out = tools.run("set_page", ["paper": "a3", "orientation": "portrait"])
+        XCTAssertFalse(out.isError, out.result)
+        XCTAssertEqual(store.doc.pageSetup.millimetres, CGSize(width: 297, height: 420))
+        out = tools.run("set_page", ["custom_width_mm": 1000, "custom_height_mm": 600])
+        XCTAssertFalse(out.isError, out.result)
+        XCTAssertEqual(store.doc.pageSetup.millimetres, CGSize(width: 1000, height: 600))
+        XCTAssertTrue(tools.run("set_page", ["custom_width_mm": 1]).isError)
+        XCTAssertEqual(tools.pageState()["sheet"]?["paper"]?.string, "custom")
     }
 }

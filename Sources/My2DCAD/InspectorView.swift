@@ -157,10 +157,14 @@ struct InspectorView: View {
         }
     }
 
-    /// Réglages de la page : unité, échelle, décimales, connecteurs, repères.
+    /// Réglages de la page : feuille, unité, échelle, décimales, connecteurs, repères.
+    @ViewBuilder
     private var pageSection: some View {
         let d = store.doc
-        return pane("Page « \(d.name) »") {
+        pane("Feuille") {
+            SheetControls()
+        }
+        pane("Page « \(d.name) »") {
             Picker("Unité", selection: Binding(
                 get: { d.unit },
                 set: { v in store.updatePageSettings { $0.unit = v; $0.precision = v.defaultPrecision } })) {

@@ -132,9 +132,13 @@ struct AssistantToolbox {
                          "operation": ["type": "string", "enum": .array(ShapeOperation.allCases.map { .string($0.rawValue) })],
                          "offset_distance": ["type": "number", "description": "Distance pour offset"]],
                         required: ["ids", "operation"])),
-            AssistantToolbox.tool("set_page", "Change l'unité, l'échelle (1:N, donner N) ou la précision d'affichage de la page.",
+            AssistantToolbox.tool("set_page", "Change la feuille (format, orientation), l'unité, l'échelle (1:N, donner N) ou la précision d'affichage de la page.",
                  AssistantToolbox.object(["unit": ["type": "string", "enum": .array(MeasureUnit.allCases.map { .string($0.rawValue) })],
-                         "scale": ["type": "number"], "precision": ["type": "integer"]])),
+                         "scale": ["type": "number"], "precision": ["type": "integer"],
+                         "paper": ["type": "string", "enum": ["a5", "a4", "a3", "a2", "custom"]],
+                         "orientation": ["type": "string", "enum": ["portrait", "landscape"]],
+                         "custom_width_mm": ["type": "number", "description": "Largeur de la feuille personnalisée, en mm"],
+                         "custom_height_mm": ["type": "number", "description": "Hauteur de la feuille personnalisée, en mm"]])),
             AssistantToolbox.tool("select", "Sélectionne des éléments pour les montrer à l'utilisateur.", AssistantToolbox.object(["ids": ids], required: ["ids"])),
             AssistantToolbox.tool("fit_view", "Ajuste le zoom pour afficher tout le dessin.", AssistantToolbox.object([:])),
         ]
@@ -527,7 +531,25 @@ struct AssistantToolbox {
     }
 
     private func setPage(_ input: JSONValue) throws -> Outcome {
-        var unit = d.unit, scale = d.scale, precision = d.precision
+        var unit = d.unit, scale = d.scale, precision = d.precision, setup = d.pageSetup
+        if let p = input["paper"] {
+            guard let v = p.string.flatMap(PaperSize.init(rawValue:)) else { throw AssistantToolError("Format inconnu") }
+            if v == .custom && setup.paper != .custom {
+                setup.customWidth = setup.millimetres.width
+                setup.customHeight = setup.millimetres.height
+            }
+            setup.paper = v
+        }
+        if let o = input["orientation"] {
+            guard let v = o.string.flatMap(PageOrientation.init(rawValue:)) else { throw AssistantToolError("Orientation inconnue") }
+            setup.orientation = v
+        }
+        if let w = input["custom_width_mm"]?.double { setup.customWidth = w; setup.paper = .custom }
+        if let h = input["custom_height_mm"]?.double { setup.customHeight = h; setup.paper = .custom }
+        if input["custom_width_mm"] != nil || input["custom_height_mm"] != nil, input["orientation"] == nil {
+            setup.orientation = setup.customWidth >= setup.customHeight ? .landscape : .portrait
+        }
+        guard setup.isValid else { throw AssistantToolError("Feuille personnalisée : 10 à 5000 mm par côté") }
         if let u = input["unit"] {
             guard let v = u.string.flatMap(MeasureUnit.init(rawValue:)) else { throw AssistantToolError("Unité inconnue") }
             if v != unit { precision = v.defaultPrecision }
@@ -541,8 +563,8 @@ struct AssistantToolbox {
             guard let v = p.double, (0...4).contains(Int(v)) else { throw AssistantToolError("Précision : 0 à 4") }
             precision = Int(v)
         }
-        store.updatePageSettings { $0.unit = unit; $0.scale = scale; $0.precision = precision }
-        return Outcome(result: "ok", summary: "Page : unité \(unit.symbol), échelle 1:\(Diagram.format(scale, decimals: scale < 1 ? 4 : 0))")
+        store.updatePageSettings { $0.unit = unit; $0.scale = scale; $0.precision = precision; $0.pageSetup = setup }
+        return Outcome(result: "ok", summary: "Page : feuille \(setup.summary), unité \(unit.symbol), échelle 1:\(Diagram.format(scale, decimals: scale < 1 ? 4 : 0))")
     }
 
     // MARK: État de la page
@@ -587,6 +609,8 @@ struct AssistantToolbox {
             "page": .string(page.name),
             "unit": .string(page.unit.rawValue),
             "scale_1_to": .number(page.scale),
+            "sheet": ["paper": .string(page.pageSetup.paper.rawValue), "orientation": .string(page.pageSetup.orientation.rawValue),
+                      "x": 0, "y": 0, "width": m(page.sheetRect.width), "height": m(page.sheetRect.height)],
             "visible_area": ["x": m(topLeft.x), "y": m(topLeft.y),
                              "width": m(bottomRight.x - topLeft.x), "height": m(bottomRight.y - topLeft.y)],
             "layers": .array(page.layers.map { l -> JSONValue in

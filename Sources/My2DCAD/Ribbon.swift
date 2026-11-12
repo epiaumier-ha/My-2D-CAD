@@ -15,6 +15,11 @@ enum VisioTheme {
         scheme == .dark ? Color(white: 0.2) : Color(white: 0.955)
     }
 
+    /// Fond de la zone de dessin, autour de la feuille.
+    static func canvas(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? Color(white: 0.24) : Color(white: 0.86)
+    }
+
     static func pane(_ scheme: ColorScheme) -> Color {
         scheme == .dark ? Color(white: 0.17) : Color(white: 0.965)
     }
@@ -566,7 +571,10 @@ struct Ribbon: View {
     @ViewBuilder
     private var designTab: some View {
         let d = store.doc
-        RibbonGroup(title: "Mise en page") {
+        RibbonGroup(title: "Feuille") {
+            SheetControls(compact: true)
+        }
+        RibbonGroup(title: "Mise à l'échelle") {
             VStack(alignment: .leading, spacing: 4) {
                 Picker("Unité", selection: Binding(
                     get: { d.unit },

@@ -42,7 +42,7 @@ enum DiagramExporter {
         return bounds
     }
 
-    /// Vue d'une page et sa taille en points (zoom 1), marges comprises.
+    /// Vue d'une page et sa taille en points (zoom 1), marges comprises : le dessin seul (PNG).
     static func pageView(_ page: Diagram) -> (ExportPageView, CGSize) {
         let content = contentBounds(page) ?? CGRect(x: 0, y: 0, width: 200, height: 150)
         let size = CGSize(width: ceil(content.width + 2 * margin), height: ceil(content.height + 2 * margin))
@@ -52,12 +52,19 @@ enum DiagramExporter {
         return (ExportPageView(painter: painter, size: size), size)
     }
 
-    /// PDF vectoriel : une page PDF par page du dessin, à sa taille.
+    /// Vue de la feuille entière, à sa taille (PDF et impression) : ce qui dépasse n'est pas imprimé.
+    static func sheetView(_ page: Diagram) -> (ExportPageView, CGSize) {
+        let size = page.sheetRect.size
+        let painter = DiagramPainter(diagram: page, zoom: 1, offset: .zero, forExport: true)
+        return (ExportPageView(painter: painter, size: size), size)
+    }
+
+    /// PDF vectoriel : une page PDF par page du dessin, au format de sa feuille.
     static func writePDF(_ document: CADDocument, to url: URL) throws {
         var defaultBox = CGRect(x: 0, y: 0, width: 595, height: 842)
         guard let pdf = CGContext(url as CFURL, mediaBox: &defaultBox, nil) else { throw ExportError.cannotCreate }
         for page in document.pages {
-            let (view, size) = pageView(page)
+            let (view, size) = sheetView(page)
             let renderer = ImageRenderer(content: view)
             renderer.proposedSize = ProposedViewSize(size)
             var box = CGRect(origin: .zero, size: size)
@@ -95,7 +102,7 @@ extension DocumentStore {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = baseName + ".pdf"
-        panel.message = "Toutes les pages sont exportées (calques visibles et imprimables)."
+        panel.message = "Toutes les pages sont exportées au format de leur feuille (calques visibles et imprimables)."
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             try DiagramExporter.writePDF(document, to: url)

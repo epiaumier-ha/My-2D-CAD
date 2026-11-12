@@ -166,6 +166,7 @@ enum AssistantPrompt {
         - Chaque demande commence par l'état de la page (<page>) : unité, échelle, zone visible, calques, éléments et sélection. Les identifiants sont les codes courts « id ».
         - Toutes les longueurs et positions sont dans l'unité de la page (« unit »), échelle comprise : ce sont des mesures réelles. Exemple : à l'échelle 1:100 en mm, un mur de 5 m mesure 5000.
         - Origine en haut à gauche, axe Y vers le bas ; x et y d'une forme désignent son coin supérieur gauche.
+        - La feuille (« sheet ») va de (0, 0) à (width, height) : c'est la partie imprimée. Place le dessin sur la feuille ; s'il ne tient pas, change d'échelle ou de format avec set_page.
         - Si une taille demandée est sans commune mesure avec la zone visible (plus de 20 fois plus grande ou plus petite), choisis une échelle adaptée avec set_page avant de dessiner et dis-le.
         - Place les nouveaux éléments dans la zone visible, sans chevaucher l'existant, alignés et régulièrement espacés. Organigramme : de haut en bas, formes de même taille, connecteurs entre elles.
         - Une forme sans remplissage : fill = "none". Couleurs en #RRGGBB.
@@ -178,8 +179,9 @@ enum AssistantPrompt {
         Aide sur l'application :
         - Outils (raccourcis) : \(tools). Échap revient au pointeur ; Espace maintenu fait glisser la vue.
         - Bibliothèques de formes à gauche (organigramme, réseau, électricité, cotation) : glisser une forme sur la page.
-        - Inspecteur à droite : onglets Forme (position, taille, page, unité, échelle), Style (remplissage, trait, extrémités, connecteurs), Texte (police, bloc de texte), Organiser (aligner, répartir, pivoter, grouper, opérations, ordre).
-        - Menus : Disposition (aligner, répartir, pivoter, grouper ⌘G, opérations sur les formes, ordre), Affichage (règles, repères, zoom), Page (pages, calques). Export PDF, PNG, SVG et impression dans le menu Fichier.
+        - Ruban en haut, comme Visio : Fichier (ouvrir, enregistrer, exporter, imprimer), Accueil (presse-papiers, police, outils, styles de forme, organiser), Insertion (pages, SVG, connecteurs, cotes, formes, texte), Création (feuille : format A5 à A2 ou personnalisé, orientation, ajuster au dessin ; unité, échelle, décimales ; connecteurs ; calques), Affichage (règles, grille, repères, volets, zoom), Développeur (opérations sur les formes, grouper, comportement).
+        - Volet « Format de la forme » à droite (remplissage, trait, texte, taille et position) ; sans sélection, il présente la page et la feuille. Volet Formes à gauche (⌥⌘1), volet Format (⌥⌘2), assistant (⌥⌘I).
+        - Menus de la barre des menus : Fichier, Édition, Affichage, Insertion, Forme (aligner, répartir, pivoter, grouper ⌘G, ordre, opérations), Outils, Page. Le PDF et l'impression reprennent la feuille ; le PNG et le SVG, le dessin.
         - Double-clic sur une forme pour modifier son texte ; le losange jaune déplace le bloc de texte.
         - Cotes : bibliothèque « Cotation » ; glisser une extrémité sur un coin, un milieu ou le centre d'une forme la colle.
 

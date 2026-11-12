@@ -52,6 +52,7 @@ private let minimumShapeSize: CGFloat = 10
 
 struct CanvasView: View {
     @EnvironmentObject var store: DocumentStore
+    @Environment(\.colorScheme) private var scheme
     @State private var interaction: Interaction?
     @State private var gestureActive = false
     /// Dernier clic sur une forme, pour détecter le double-clic.
@@ -511,8 +512,18 @@ struct CanvasView: View {
     // MARK: - Rendu
 
     private func render(_ ctx: inout GraphicsContext, size: CGSize, painter: DiagramPainter) {
-        ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(nsColor: .textBackgroundColor)))
-        drawGrid(&ctx, size: size)
+        // Comme Visio : fond gris, feuille blanche ombrée, quadrillage sur la feuille.
+        ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(VisioTheme.canvas(scheme)))
+        let sheet = CGRect(origin: store.toScreen(.zero),
+                           size: CGSize(width: store.doc.sheetRect.width * store.zoom,
+                                        height: store.doc.sheetRect.height * store.zoom))
+        var shadowed = ctx
+        shadowed.addFilter(.shadow(color: .black.opacity(0.25), radius: 4, x: 1, y: 2))
+        shadowed.fill(Path(sheet), with: .color(.white))
+        var grid = ctx
+        grid.clip(to: Path(sheet))
+        drawGrid(&grid, size: size)
+        ctx.stroke(Path(sheet), with: .color(.black.opacity(0.15)), lineWidth: 0.5)
 
         painter.drawContent(&ctx)
 

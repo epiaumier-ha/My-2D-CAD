@@ -177,10 +177,12 @@ struct Diagram: Codable, Equatable {
     var defaultRouting: ConnectorRouting = .orthogonal
     /// Repères tirés des règles.
     var guides: [GuideLine] = []
+    /// Feuille : format et orientation de la page imprimée.
+    var pageSetup = PageSetup()
 
     enum CodingKeys: String, CodingKey {
         case version, shapes, connectors, id, name, layers, activeLayerID
-        case unit, scale, precision, defaultRouting, guides
+        case unit, scale, precision, defaultRouting, guides, pageSetup
     }
 
     func shape(_ id: UUID) -> Shape? { shapes.first { $0.id == id } }
@@ -239,6 +241,7 @@ extension Diagram {
         precision = try c.decodeIfPresent(Int.self, forKey: .precision) ?? 1
         defaultRouting = try c.decodeIfPresent(ConnectorRouting.self, forKey: .defaultRouting) ?? .orthogonal
         guides = try c.decodeIfPresent([GuideLine].self, forKey: .guides) ?? []
+        pageSetup = try c.decodeIfPresent(PageSetup.self, forKey: .pageSetup) ?? PageSetup()
     }
 }
 
