@@ -619,8 +619,9 @@ final class PagesLayersGroupsTests: XCTestCase {
 
     func testAlignmentSnap() {
         let target = CGRect(x: 100, y: 100, width: 50, height: 50)
-        // Bord gauche à 3 unités du bord gauche de la cible, centre vertical à 2 unités.
-        let snap = alignmentSnap(moving: CGRect(x: 103, y: 300, width: 20, height: 20),
+        // Bord gauche à 3 unités du bord gauche de la cible ; centre (118) et bord droit (133)
+        // trop loin des autres repères (125, 150) : un seul alignement possible.
+        let snap = alignmentSnap(moving: CGRect(x: 103, y: 300, width: 30, height: 20),
                                  targets: [target], tolerance: 6)
         XCTAssertEqual(snap.dx, -3)
         XCTAssertNil(snap.dy)
@@ -631,6 +632,9 @@ final class PagesLayersGroupsTests: XCTestCase {
         let centre = alignmentSnap(moving: CGRect(origin: CGPoint(x: 400, y: 127), size: .zero),
                                    targets: [target], tolerance: 6)
         XCTAssertEqual(centre.dy, -2)
+        // Deux alignements possibles : le plus proche l'emporte (bord droit 123 → centre 125).
+        XCTAssertEqual(alignmentSnap(moving: CGRect(x: 103, y: 300, width: 20, height: 20),
+                                     targets: [target], tolerance: 6).dx, 2)
         XCTAssertNil(alignmentSnap(moving: CGRect(x: 500, y: 500, width: 10, height: 10),
                                    targets: [target], tolerance: 6).dx)
     }
