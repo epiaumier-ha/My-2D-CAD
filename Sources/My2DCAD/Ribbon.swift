@@ -326,14 +326,14 @@ struct Ribbon: View {
         RibbonGroup(title: "Organiser") { arrangeGroup }
         RibbonGroup(title: "Modification") {
             column {
-                RibbonSmallButton(title: "Sélectionner tout", symbol: "selection.pin.in.out", help: "Tout sélectionner (⌘A)") {
+                RibbonSmallButton(title: "Tout sélectionner", symbol: "selection.pin.in.out", help: "Tout sélectionner (⌘A)") {
                     store.selectAllCommand()
                 }
                 RibbonSmallButton(title: "Supprimer", symbol: "trash", help: "Supprimer la sélection (⌫)") {
                     store.deleteCommand()
                 }
                 .disabled(store.selection.isEmpty)
-                RibbonMenu(title: "Calques", symbol: "square.3.layers.3d", help: "Affecter la sélection à un calque") {
+                RibbonMenu(title: "Affecter au calque", symbol: "square.3.layers.3d", help: "Placer la sélection sur un calque") {
                     Button("Sans calque") { store.assignSelection(toLayer: nil) }
                     ForEach(store.doc.layers) { l in
                         Button(l.name) { store.assignSelection(toLayer: l.id) }
@@ -708,10 +708,10 @@ struct Ribbon: View {
         }
         RibbonGroup(title: "Comportement") {
             column {
-                RibbonSmallButton(title: "Rétablir le bloc de texte", symbol: "text.badge.xmark") { store.resetTextBlocks() }
-                RibbonSmallButton(title: "Décoller les cotes", symbol: "link.badge.plus") { store.unglueSelection() }
+                RibbonSmallButton(title: "Rétablir la position du texte", symbol: "text.badge.xmark") { store.resetTextBlocks() }
+                RibbonSmallButton(title: "Décoller la cote", symbol: "link.badge.plus") { store.unglueSelection() }
                     .disabled(!store.selectionHasGlue)
-                RibbonSmallButton(title: "Inverser le connecteur", symbol: "arrow.left.arrow.right") {
+                RibbonSmallButton(title: "Inverser le sens du connecteur", symbol: "arrow.left.arrow.right") {
                     store.reverseSelectedConnectors()
                 }
             }

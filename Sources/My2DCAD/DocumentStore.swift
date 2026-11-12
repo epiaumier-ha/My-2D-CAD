@@ -9,8 +9,8 @@ enum Tool: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .select: return "Sélection"
-        case .pan: return "Main (déplacer la vue)"
+        case .select: return "Pointeur"
+        case .pan: return "Main"
         case .rectangle: return "Rectangle"
         case .ellipse: return "Ellipse"
         case .diamond: return "Losange"

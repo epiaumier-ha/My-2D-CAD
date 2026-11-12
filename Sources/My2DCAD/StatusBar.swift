@@ -9,6 +9,8 @@ struct StatusBar: View {
         HStack(spacing: 14) {
             Label(store.tool.label, systemImage: store.tool.symbol)
             Divider().frame(height: 12)
+            Text("Page \(store.currentPage + 1) sur \(store.pageCount)").monospacedDigit()
+            Divider().frame(height: 12)
             Text(pointerText).monospacedDigit().frame(minWidth: 130, alignment: .leading)
             Divider().frame(height: 12)
             Text(selectionText).lineLimit(1)
@@ -49,13 +51,20 @@ struct StatusBar: View {
             if let s = store.singleSelectedShape, s.kind.isDimension {
                 return "Glisser une extrémité sur un coin, un milieu ou un centre pour coller la cote · Poignée ronde : position de la cote"
             }
-            return "Double-clic : texte · ⌥-glisser : dupliquer · Maj : ajouter à la sélection · Espace : déplacer la vue"
-        case .pan: return "Glisser pour déplacer la vue · V : sélection"
-        case .text: return "Clic ou glisser pour créer un texte · Échap : sélection"
-        case .connector: return "Glisser d'une forme à une autre · Échap : sélection"
-        case .line, .dimension: return "Glisser pour tracer · Maj : 45° · Échap : sélection"
-        case .curve: return "Glisser, puis régler la courbure avec la poignée ronde · Échap : sélection"
-        case .rectangle, .ellipse, .diamond: return "Clic : taille par défaut · Glisser : taille libre · Échap : sélection"
+            if store.selection.count > 1 {
+                return "Maj-clic : ajouter ou retirer · Flèches : déplacer (⇧ : ×5, ⌥ : 1 pt) · clic droit : aligner, grouper, opérations"
+            }
+            if !store.selection.isEmpty {
+                return "Double-clic ou Entrée : texte · ⌥-glisser : dupliquer · Flèches : déplacer · clic droit : plus d'actions"
+            }
+            return "Glisser une forme du volet Formes · Glisser sur le vide : sélection multiple · Espace : déplacer la vue"
+        case .pan: return "Glisser pour déplacer la vue · V : pointeur"
+        case .text: return "Clic ou glisser pour créer un texte · Échap : pointeur"
+        case .connector: return "Glisser d'une forme à une autre · Échap : pointeur"
+        case .line: return "Glisser pour tracer · Maj : 45° · Échap : pointeur"
+        case .dimension: return "Glisser d'un point à l'autre (coin, milieu, centre : la cote est collée) · Maj : 45° · Échap : pointeur"
+        case .curve: return "Glisser, puis régler la courbure avec la poignée ronde · Échap : pointeur"
+        case .rectangle, .ellipse, .diamond: return "Clic : taille par défaut · Glisser : taille libre · Échap : pointeur"
         }
     }
 

@@ -658,30 +658,72 @@ struct CanvasView: View {
     // MARK: - Menu contextuel et curseurs
 
     @ViewBuilder
+    /// Menu contextuel adapté à ce qui est sous le pointeur, avec les mêmes libellés que les menus.
+    @ViewBuilder
     private var canvasContextMenu: some View {
-        Button("Couper") { store.cutSelection() }
-        Button("Copier") { store.copySelection() }
-        Button("Coller") { store.paste() }
-        Button("Dupliquer") { store.duplicateSelection() }
-        Button("Supprimer") { store.deleteSelection() }
-        Divider()
-        Button("Modifier le texte") {
-            if store.selection.count == 1, let id = store.selection.first, store.doc.shape(id) != nil {
-                store.startTextEditing(id)
+        let shapes = store.selectedShapes
+        let hasConnector = store.doc.connectors.contains { store.selection.contains($0.id) }
+        if store.selection.isEmpty {
+            Button("Coller") { store.paste() }
+            Button("Tout sélectionner") { store.selectAll() }
+            Divider()
+            Button("Ajuster à la fenêtre") { store.fitToContent() }
+            Toggle("Grille", isOn: Binding(
+                get: { store.doc.grid.visible },
+                set: { v in store.updatePageSettings { $0.grid.visible = v } }))
+            Toggle("Magnétisme de la grille", isOn: $store.snapEnabled)
+            Divider()
+            Button("Ajuster la feuille au dessin") { store.fitSheetToDrawing() }
+                .disabled(store.doc.shapes.isEmpty)
+        } else {
+            Button("Couper") { store.cutSelection() }
+            Button("Copier") { store.copySelection() }
+            Button("Coller") { store.paste() }
+            Button("Dupliquer") { store.duplicateSelection() }
+            Button("Supprimer") { store.deleteSelection() }
+            if let s = store.singleSelectedShape {
+                Divider()
+                Button(s.text.isEmpty ? "Ajouter du texte" : "Modifier le texte") { store.startTextEditing(s.id) }
+                if s.hasCustomTextBlock {
+                    Button("Rétablir la position du texte") { store.resetTextBlocks() }
+                }
             }
-        }
-        Button("Rétablir la position du texte") { store.resetTextBlocks() }
-        Divider()
-        ForEach(StackingOrder.allCases, id: \.self) { order in
-            Button(order.label) { store.reorderSelection(order) }
-        }
-        Divider()
-        Button("Faire pivoter à droite (90°)") { store.rotateSelection(by: 90) }
-        Button("Inverser le sens du connecteur") { store.reverseSelectedConnectors() }
-        Divider()
-        Menu("Opérations") {
-            ForEach(ShapeOperation.allCases) { op in
-                Button(op.label) { store.runOperation(op) }.disabled(!store.canApply(op))
+            if !shapes.isEmpty {
+                Divider()
+                if shapes.count >= 2 {
+                    Menu("Aligner") {
+                        ForEach(ShapeAlignment.allCases, id: \.self) { a in
+                            Button(a.label) { store.align(a) }
+                        }
+                    }
+                }
+                if shapes.count >= 3 {
+                    Menu("Répartir") {
+                        Button("Horizontalement") { store.distribute(.horizontal) }
+                        Button("Verticalement") { store.distribute(.vertical) }
+                    }
+                }
+                Menu("Faire pivoter") {
+                    Button("À droite de 90°") { store.rotateSelection(by: 90) }
+                    Button("À gauche de 90°") { store.rotateSelection(by: -90) }
+                }
+                Menu("Ordre") {
+                    ForEach(StackingOrder.allCases, id: \.self) { order in
+                        Button(order.label) { store.reorderSelection(order) }
+                    }
+                }
+                if store.canGroup { Button("Grouper") { store.groupSelection() } }
+                if store.canUngroup { Button("Dissocier") { store.ungroupSelection() } }
+                Menu("Opérations") {
+                    ForEach(ShapeOperation.allCases) { op in
+                        Button(op.label) { store.runOperation(op) }.disabled(!store.canApply(op))
+                    }
+                }
+            }
+            if hasConnector || store.selectionHasGlue {
+                Divider()
+                if hasConnector { Button("Inverser le sens du connecteur") { store.reverseSelectedConnectors() } }
+                if store.selectionHasGlue { Button("Décoller la cote") { store.unglueSelection() } }
             }
         }
     }

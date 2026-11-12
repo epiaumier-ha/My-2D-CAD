@@ -97,7 +97,7 @@ struct InspectorView: View {
             pane("Taille et position") {
                 field("X", value: s.rect.origin.x) { $0.rect.origin.x = $1 }
                 field("Y", value: s.rect.origin.y) { $0.rect.origin.y = $1 }
-                Text("Valeurs en \(store.doc.unit.label.lowercased()), à l'échelle 1:\(Diagram.format(store.doc.scale, decimals: 0)) de la page.")
+                Text("Valeurs en \(store.doc.unit.label.lowercased()), à l'échelle 1:\(Diagram.formatCompact(store.doc.scale)) de la page.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if !s.kind.isPath {
@@ -117,7 +117,7 @@ struct InspectorView: View {
                 LabeledContent("De", value: store.shapeLabel(c.fromShape))
                 LabeledContent("Vers", value: store.shapeLabel(c.toShape))
                 LabeledContent("Tracé", value: c.routing.label)
-                Button("Inverser le sens") { store.reverseSelectedConnectors() }
+                Button("Inverser le sens du connecteur") { store.reverseSelectedConnectors() }
             }
             Section {
                 Text("Glissez une extrémité du connecteur sur une autre forme pour le recoller.")
@@ -131,7 +131,8 @@ struct InspectorView: View {
             }
             pageSection
             pane("Raccourcis") {
-                Text("V sélection · H main · C connecteur · T texte\nR rectangle · E ellipse · D losange · L trait · B courbe · M cote\nÉchap : revenir à la sélection")
+                Text(Tool.allCases.map { "\(String($0.shortcut).uppercased()) \($0.label.lowercased())" }.joined(separator: " · ")
+                     + "\nÉchap : revenir au pointeur · Espace maintenu : déplacer la vue")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -394,7 +395,7 @@ struct InspectorView: View {
                         }), format: .number.precision(.fractionLength(0...max(d.precision, 1))))
                 }
             }
-            Button("Rétablir la position par défaut") { store.resetTextBlocks() }
+            Button("Rétablir la position du texte") { store.resetTextBlocks() }
                 .disabled(!s.hasCustomTextBlock)
             Text("Sur le dessin : poignée jaune pour déplacer le texte (Maj : horizontal ou vertical), poignées vertes pour sa largeur.")
                 .font(.caption)

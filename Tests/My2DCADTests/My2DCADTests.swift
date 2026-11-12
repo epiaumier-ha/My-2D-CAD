@@ -1680,3 +1680,48 @@ final class GridTests: XCTestCase {
         XCTAssertEqual(Diagram.formatCompact(5), "5")
     }
 }
+
+@MainActor
+final class ConsistencyTests: XCTestCase {
+    func testNewPageInheritsPageSettings() {
+        let store = DocumentStore()
+        store.updatePageSettings {
+            $0.unit = .m; $0.scale = 100; $0.precision = 3
+            $0.pageSetup.paper = .a3; $0.grid.mode = .fixed; $0.defaultRouting = .curved
+        }
+        store.addPage()
+        let page = store.doc
+        XCTAssertEqual(store.currentPage, 1)
+        XCTAssertEqual(page.unit, .m)
+        XCTAssertEqual(page.scale, 100)
+        XCTAssertEqual(page.precision, 3)
+        XCTAssertEqual(page.pageSetup.paper, .a3)
+        XCTAssertEqual(page.grid.mode, .fixed)
+        XCTAssertEqual(page.defaultRouting, .curved)
+        XCTAssertTrue(page.shapes.isEmpty)
+    }
+
+    func testDuplicatedPageKeepsDimensionGlue() {
+        let store = DocumentStore()
+        let rect = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 100, height: 50))
+        var dim = Shape(kind: .dimensionHorizontal, rect: .zero, line: .dimensionDefault)
+        dim.setWorldPoints([CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0), CGPoint(x: 50, y: -20)])
+        dim.glue = [GluePoint(point: 0, shape: rect.id, anchor: 0), GluePoint(point: 1, shape: rect.id, anchor: 1)]
+        store.perform { $0.shapes = [rect, dim] }
+        store.duplicatePage(0)
+        let copy = store.doc
+        let newRect = copy.shapes[0], newDim = copy.shapes[1]
+        XCTAssertNotEqual(newRect.id, rect.id)
+        XCTAssertEqual(Set(newDim.glue.map(\.shape)), [newRect.id], "la cote copiée reste collée à la forme copiée")
+        store.perform { $0.shapes[0].rect.size.width = 150 }
+        XCTAssertEqual(store.doc.shapes[1].dimensionLayout!.value, 150, accuracy: 1e-9)
+        XCTAssertNoThrow(try DiagramIO.validate(store.doc))
+    }
+
+    func testToolLabelsAndShortcutsAreConsistent() {
+        XCTAssertEqual(Tool.select.label, "Pointeur")
+        XCTAssertEqual(Tool.select.labelWithShortcut, "Pointeur (V)")
+        XCTAssertEqual(Set(Tool.allCases.map(\.shortcut)).count, Tool.allCases.count)
+        XCTAssertTrue(AssistantPrompt.system.contains("Pointeur (V)"))
+    }
+}

@@ -235,7 +235,7 @@ struct My2DCADApp: App {
                 }
                 .disabled(store.selection.isEmpty)
                 Divider()
-                Button("Rétablir le bloc de texte") { store.resetTextBlocks() }
+                Button("Rétablir la position du texte") { store.resetTextBlocks() }
                     .disabled(store.selectedShapes.isEmpty)
                 Button("Décoller la cote") { store.unglueSelection() }
                     .disabled(!store.selectionHasGlue)
@@ -243,9 +243,10 @@ struct My2DCADApp: App {
                     .disabled(store.selection.isEmpty)
             }
             CommandMenu("Outils") {
-                // ⌘1 à ⌘9 pour les neuf premiers outils ; les suivants n'ont que leur lettre.
+                // ⌘1 à ⌘8 pour les huit premiers outils (⌘9 : ajuster à la fenêtre) ;
+                // les suivants n'ont que leur lettre.
                 ForEach(Array(Tool.allCases.enumerated()), id: \.element) { index, tool in
-                    if index < 9 {
+                    if index < 8 {
                         Button(tool.labelWithShortcut) { store.tool = tool }
                             .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
                     } else {

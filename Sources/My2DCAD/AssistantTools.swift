@@ -517,7 +517,13 @@ struct AssistantToolbox {
             default: throw AssistantToolError("Action inconnue : \(action)")
             }
         }
-        return Outcome(result: "ok", summary: "Disposition : \(action.replacingOccurrences(of: "_", with: " "))")
+        let labels: [String: String] = [
+            "align_left": "alignement à gauche", "align_center": "alignement au centre", "align_right": "alignement à droite",
+            "align_top": "alignement en haut", "align_middle": "alignement au milieu", "align_bottom": "alignement en bas",
+            "distribute_horizontal": "répartition horizontale", "distribute_vertical": "répartition verticale",
+            "group": "groupement", "ungroup": "dissociation", "bring_to_front": "premier plan",
+            "send_to_back": "arrière-plan", "rotate_right": "rotation à droite", "rotate_left": "rotation à gauche"]
+        return Outcome(result: "ok", summary: "Organisation : \(labels[action] ?? action)")
     }
 
     private func shapeOperation(_ input: JSONValue) throws -> Outcome {

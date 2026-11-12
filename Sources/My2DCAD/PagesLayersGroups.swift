@@ -16,7 +16,15 @@ extension DocumentStore {
 
     func addPage() {
         guard document.pages.count < CADDocument.maxPages else { return }
-        let page = Diagram(name: nextPageName())
+        // Comme Visio : la nouvelle page reprend la feuille, la grille, l'unité et l'échelle de la page affichée.
+        var page = Diagram(name: nextPageName())
+        let current = doc
+        page.unit = current.unit
+        page.scale = current.scale
+        page.precision = current.precision
+        page.defaultRouting = current.defaultRouting
+        page.pageSetup = current.pageSetup
+        page.grid = current.grid
         let index = currentPage + 1
         performDocument { $0.pages.insert(page, at: index) }
         selectPage(index)
@@ -44,6 +52,14 @@ extension DocumentStore {
             if let g = copy.shapes[i].groupID {
                 if groupMap[g] == nil { groupMap[g] = UUID() }
                 copy.shapes[i].groupID = groupMap[g]
+            }
+        }
+        for i in copy.shapes.indices where !copy.shapes[i].glue.isEmpty {
+            copy.shapes[i].glue = copy.shapes[i].glue.compactMap { g in
+                guard let target = shapeMap[g.shape] else { return nil }
+                var copied = g
+                copied.shape = target
+                return copied
             }
         }
         for i in copy.connectors.indices {
