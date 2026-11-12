@@ -761,7 +761,6 @@ final class CADFeaturesTests: XCTestCase {
     func testSVGImport() throws {
         let svg = """
         <?xml version="1.0"?>
-        <!DOCTYPE svg [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
         <svg xmlns="http://www.w3.org/2000/svg" width="200pt" height="100pt" viewBox="0 0 400 200">
           <defs><rect id="cache" width="5" height="5"/></defs>
           <rect x="0" y="0" width="100" height="50" fill="#ff0000" stroke="black" stroke-width="2"/>
@@ -770,7 +769,7 @@ final class CADFeaturesTests: XCTestCase {
             <line x1="0" y1="100" x2="100" y2="100" stroke="green"/>
             <path d="M0 150 L50 190 L100 150 Z" fill="rgb(0,128,0)"/>
           </g>
-          <text x="10" y="180" font-size="20" font-weight="bold">Bonjour &xxe;</text>
+          <text x="10" y="180" font-size="20" font-weight="bold">Bonjour</text>
         </svg>
         """
         let shapes = try SVGImporter.shapes(from: Data(svg.utf8))
@@ -781,8 +780,17 @@ final class CADFeaturesTests: XCTestCase {
         XCTAssertEqual(shapes[0].line.width, 1, accuracy: 1e-9)
         XCTAssertEqual(shapes[1].rect, CGRect(x: 112.5, y: 12.5, width: 25, height: 25))
         XCTAssertTrue(shapes[1].noFill)
-        XCTAssertFalse(shapes[4].text.contains("root"), "entité externe non résolue")
+        XCTAssertEqual(shapes[4].text, "Bonjour")
         XCTAssertTrue(shapes[4].textStyle.bold)
+
+        // Entité externe : jamais résolue (pas de lecture de fichier local).
+        let xxe = """
+        <?xml version="1.0"?>
+        <!DOCTYPE svg [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+        <svg xmlns="http://www.w3.org/2000/svg"><text x="0" y="20">A&xxe;</text><rect width="5" height="5"/></svg>
+        """
+        let parsed = (try? SVGImporter.shapes(from: Data(xxe.utf8))) ?? []
+        XCTAssertFalse(parsed.contains { $0.text.contains("root") })
 
         let store = DocumentStore()
         try store.importSVG(data: Data(svg.utf8))
