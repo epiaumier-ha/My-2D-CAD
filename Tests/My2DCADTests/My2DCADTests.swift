@@ -1375,11 +1375,12 @@ final class ScriptedEngine: AssistantEngine, @unchecked Sendable {
     init(_ replies: [Result<EngineReply, Error>]) { self.replies = replies }
 
     func respond(system: String, messages: [JSONValue], tools: [JSONValue]) async throws -> EngineReply {
-        lock.lock()
-        defer { lock.unlock() }
-        requests.append(messages)
-        guard !replies.isEmpty else { return EngineReply(content: [["type": "text", "text": "Fin."]], stopReason: "end_turn") }
-        return try replies.removeFirst().get()
+        let next: Result<EngineReply, Error>? = lock.withLock {
+            requests.append(messages)
+            return replies.isEmpty ? nil : replies.removeFirst()
+        }
+        guard let next else { return EngineReply(content: [["type": "text", "text": "Fin."]], stopReason: "end_turn") }
+        return try next.get()
     }
 }
 

@@ -29,8 +29,8 @@ final class AssistantSession: ObservableObject {
 
     let store: DocumentStore
 
-    init(store: DocumentStore = .shared) {
-        self.store = store
+    init(store: DocumentStore? = nil) {
+        self.store = store ?? .shared
     }
 
     func send(_ text: String, engine: (any AssistantEngine)? = nil) {
