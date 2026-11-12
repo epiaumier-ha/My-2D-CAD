@@ -229,6 +229,13 @@ struct My2DCADApp: App {
                 Button(StackingOrder.back.label) { store.reorderSelection(.back) }
                     .keyboardShortcut("[", modifiers: [.command, .shift])
                 Divider()
+                Menu("Opérations") {
+                    ForEach(ShapeOperation.allCases) { op in
+                        Button(op.label) { store.runOperation(op) }.disabled(!store.canApply(op))
+                    }
+                }
+                .disabled(store.selection.isEmpty)
+                Divider()
                 Button("Inverser le sens du connecteur") { store.reverseSelectedConnectors() }
             }
             CommandMenu("Outils") {

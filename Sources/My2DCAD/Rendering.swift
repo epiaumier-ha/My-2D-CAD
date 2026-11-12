@@ -143,7 +143,7 @@ struct DiagramPainter {
             let showLine = s.line.dash != .none
             if !parts.fill.isEmpty {
                 let body = parts.fill.applying(t)
-                if let fill = s.fillColor { ctx.fill(body, with: .color(fill)) }
+                if let fill = s.fillColor { ctx.fill(body, with: .color(fill), style: FillStyle(eoFill: s.evenOdd)) }
                 if showLine { ctx.stroke(body, with: .color(lineColor), style: style) }
             }
             if !parts.stroke.isEmpty && showLine {

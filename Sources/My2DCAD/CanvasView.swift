@@ -663,6 +663,12 @@ struct CanvasView: View {
         Divider()
         Button("Faire pivoter à droite (90°)") { store.rotateSelection(by: 90) }
         Button("Inverser le sens du connecteur") { store.reverseSelectedConnectors() }
+        Divider()
+        Menu("Opérations") {
+            ForEach(ShapeOperation.allCases) { op in
+                Button(op.label) { store.runOperation(op) }.disabled(!store.canApply(op))
+            }
+        }
     }
 
     private func cursor(for tool: Tool) -> NSCursor {

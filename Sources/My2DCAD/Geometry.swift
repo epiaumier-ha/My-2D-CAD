@@ -111,7 +111,7 @@ extension Shape {
         case .freeform where !segments.isEmpty:
             // Forme libre (SVG importé) : intérieur du tracé s'il est rempli, sinon à 4 points du trait.
             let path = paths(in: rect).fill
-            if !noFill && path.contains(p) { return true }
+            if !noFill && path.contains(p, eoFill: evenOdd) { return true }
             return path.cgPath.copy(strokingWithWidth: 8, lineCap: .round, lineJoin: .round, miterLimit: 4)
                 .contains(p)
         default:

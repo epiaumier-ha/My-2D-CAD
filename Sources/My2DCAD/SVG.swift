@@ -87,7 +87,8 @@ enum SVGExporter {
         if s.kind != .text {
             let parts = s.paths(in: r)
             if !parts.fill.isEmpty {
-                out += pathElement(parts.fill, fill: s.noFill ? nil : (s.fill, 1 - s.fillTransparency), stroke: s.line)
+                out += pathElement(parts.fill, fill: s.noFill ? nil : (s.fill, 1 - s.fillTransparency), stroke: s.line,
+                                   evenOdd: s.evenOdd)
             }
             if !parts.stroke.isEmpty { out += pathElement(parts.stroke, fill: nil, stroke: s.line) }
         }
@@ -118,8 +119,10 @@ enum SVGExporter {
 
     // MARK: Éléments
 
-    private static func pathElement(_ path: Path, fill: (RGBA, Double)?, stroke l: LineStyle) -> String {
+    private static func pathElement(_ path: Path, fill: (RGBA, Double)?, stroke l: LineStyle,
+                                    evenOdd: Bool = false) -> String {
         var attrs = "d=\"\(pathData(path))\""
+        if evenOdd { attrs += " fill-rule=\"evenodd\"" }
         if let f = fill {
             let (c, opacity) = f
             attrs += " fill=\"\(hex(c))\""

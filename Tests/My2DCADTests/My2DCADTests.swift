@@ -1185,3 +1185,183 @@ final class DimensionTests: XCTestCase {
         XCTAssertEqual(tick.path.boundingRect.width, 8 * 0.5.squareRoot(), accuracy: 1e-6, "trait à 45°")
     }
 }
+
+@MainActor
+final class ShapeOperationTests: XCTestCase {
+    /// Page contenant les formes, sélectionnées dans l'ordre donné.
+    private func store(_ shapes: [Shape]) -> DocumentStore {
+        let store = DocumentStore()
+        store.perform { $0.shapes = shapes }
+        for s in shapes { store.selection.insert(s.id) }
+        return store
+    }
+
+    private func rect(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat) -> Shape {
+        Shape(kind: .rectangle, rect: CGRect(x: x, y: y, width: w, height: h))
+    }
+
+    private func line(_ a: CGPoint, _ b: CGPoint) -> Shape {
+        var s = Shape(kind: .line, rect: .zero)
+        s.setWorldPoints([a, b])
+        return s
+    }
+
+    private func assertRect(_ r: CGRect, _ expected: CGRect, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(r.minX, expected.minX, accuracy: 0.01, file: file, line: line)
+        XCTAssertEqual(r.minY, expected.minY, accuracy: 0.01, file: file, line: line)
+        XCTAssertEqual(r.width, expected.width, accuracy: 0.01, file: file, line: line)
+        XCTAssertEqual(r.height, expected.height, accuracy: 0.01, file: file, line: line)
+    }
+
+    func testUnionIsUndoableAndKeepsPrimaryFormat() throws {
+        var a = rect(0, 0, 100, 100)
+        a.fill = RGBA(r: 1, g: 0, b: 0, a: 1)
+        a.text = "A"
+        let s = store([a, rect(50, 0, 100, 100)])
+        try s.applyOperation(.union)
+        XCTAssertEqual(s.doc.shapes.count, 1)
+        let u = s.doc.shapes[0]
+        XCTAssertEqual(u.kind, .freeform)
+        assertRect(u.rect, CGRect(x: 0, y: 0, width: 150, height: 100))
+        XCTAssertEqual(u.fill, a.fill)
+        XCTAssertEqual(u.text, "A")
+        XCTAssertTrue(u.contains(CGPoint(x: 125, y: 50)))
+        XCTAssertEqual(s.selection, [u.id])
+        XCTAssertNoThrow(try DiagramIO.validate(s.doc))
+        s.undo()
+        XCTAssertEqual(s.doc.shapes.count, 2)
+    }
+
+    func testIntersectAndSubtractFollowSelectionOrder() throws {
+        let a = rect(0, 0, 100, 100), b = rect(50, 0, 100, 100)
+        var s = store([a, b])
+        try s.applyOperation(.intersect)
+        assertRect(s.doc.shapes[0].rect, CGRect(x: 50, y: 0, width: 50, height: 100))
+
+        s = store([a, b])
+        try s.applyOperation(.subtract)
+        assertRect(s.doc.shapes[0].rect, CGRect(x: 0, y: 0, width: 50, height: 100))
+
+        s = store([b, a])   // B d'abord : A est retiré de B
+        try s.applyOperation(.subtract)
+        assertRect(s.doc.shapes[0].rect, CGRect(x: 100, y: 0, width: 50, height: 100))
+    }
+
+    func testCombineHollowsOverlap() throws {
+        let s = store([rect(0, 0, 100, 100), rect(50, 0, 100, 100)])
+        try s.applyOperation(.combine)
+        let c = s.doc.shapes[0]
+        XCTAssertTrue(c.evenOdd)
+        XCTAssertTrue(c.contains(CGPoint(x: 25, y: 50)))
+        XCTAssertFalse(c.contains(CGPoint(x: 75, y: 50)), "zone commune évidée")
+        XCTAssertTrue(c.contains(CGPoint(x: 125, y: 50)))
+    }
+
+    func testFragmentSplitsAlongIntersections() throws {
+        let s = store([rect(0, 0, 100, 100), rect(50, 0, 100, 100)])
+        try s.applyOperation(.fragment)
+        XCTAssertEqual(s.doc.shapes.count, 3)
+        let widths = s.doc.shapes.map { ($0.rect.width * 100).rounded() / 100 }.sorted()
+        XCTAssertEqual(widths, [50, 50, 50])
+        XCTAssertEqual(s.selection.count, 3)
+    }
+
+    func testRotationIsTakenIntoAccount() throws {
+        var bar = rect(0, 0, 100, 20)
+        bar.rotation = 90   // centre (50, 10) : occupe x 40…60, y -40…60
+        let s = store([bar, rect(40, 50, 20, 30)])
+        try s.applyOperation(.union)
+        assertRect(s.doc.shapes[0].rect, CGRect(x: 40, y: -40, width: 20, height: 120))
+    }
+
+    func testErrors() {
+        let s = store([rect(0, 0, 10, 10), rect(100, 0, 10, 10)])
+        XCTAssertThrowsError(try s.applyOperation(.intersect)) {
+            XCTAssertEqual($0 as? ShapeOperationError, .emptyResult)
+        }
+        XCTAssertEqual(s.doc.shapes.count, 2, "rien n'est modifié en cas d'échec")
+        s.selection = [s.doc.shapes[0].id]
+        XCTAssertFalse(s.canApply(.union))
+        XCTAssertThrowsError(try s.applyOperation(.union))
+        XCTAssertTrue(s.canApply(.offset))
+        let lines = store([line(CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 0)), line(CGPoint(x: 0, y: 5), CGPoint(x: 10, y: 5))])
+        XCTAssertFalse(lines.canApply(.union), "un trait n'a pas de surface")
+        XCTAssertThrowsError(try lines.applyOperation(.trim)) {
+            XCTAssertEqual($0 as? ShapeOperationError, .nothingToDo)
+        }
+    }
+
+    func testJoinChainsLinesAndClosesLoop() throws {
+        let p = [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0), CGPoint(x: 100, y: 100)]
+        let open = store([line(p[0], p[1]), line(p[2], p[1])])   // le second est à l'envers
+        try open.applyOperation(.join)
+        XCTAssertEqual(open.doc.shapes.count, 1)
+        let o = open.doc.shapes[0]
+        XCTAssertTrue(o.noFill, "tracé ouvert : pas de remplissage")
+        XCTAssertEqual(contours(of: o.paths(in: o.rect).fill).count, 1, "un seul tracé continu")
+
+        let triangle = store([line(p[0], p[1]), line(p[1], p[2]), line(p[2], p[0])])
+        try triangle.applyOperation(.join)
+        let t = triangle.doc.shapes[0]
+        let c = contours(of: t.paths(in: t.rect).fill)
+        XCTAssertEqual(c.count, 1)
+        XCTAssertTrue(c[0].closed)
+        XCTAssertFalse(t.noFill, "boucle fermée : forme remplissable")
+        XCTAssertTrue(t.contains(CGPoint(x: 70, y: 30)))
+    }
+
+    func testTrimCutsAtIntersections() throws {
+        let s = store([line(CGPoint(x: 0, y: 50), CGPoint(x: 100, y: 50)),
+                       line(CGPoint(x: 50, y: 0), CGPoint(x: 50, y: 100))])
+        try s.applyOperation(.trim)
+        XCTAssertEqual(s.doc.shapes.count, 4)
+        XCTAssertTrue(s.doc.shapes.allSatisfy { abs(max($0.rect.width, $0.rect.height) - 50) < 0.01 })
+
+        let r = store([rect(0, 0, 100, 100), line(CGPoint(x: -10, y: 50), CGPoint(x: 110, y: 50))])
+        try r.applyOperation(.trim)
+        XCTAssertEqual(r.doc.shapes.count, 5, "contour coupé en 2, trait coupé en 3")
+        XCTAssertNoThrow(try DiagramIO.validate(r.doc))
+    }
+
+    func testOffsetKeepsOriginal() throws {
+        let s = store([rect(0, 0, 100, 100)])
+        s.offsetDistance = 10
+        try s.applyOperation(.offset)
+        XCTAssertEqual(s.doc.shapes.count, 2)
+        let o = s.doc.shapes[1]
+        assertRect(o.rect, CGRect(x: -10, y: -10, width: 120, height: 120))
+        XCTAssertTrue(o.noFill)
+        XCTAssertEqual(contours(of: o.paths(in: o.rect).fill).count, 2, "contours extérieur et intérieur")
+    }
+
+    func testFitCurveSmoothsPolyline() throws {
+        var path = Path()
+        path.addLines([CGPoint(x: 0, y: 0), CGPoint(x: 50, y: 40), CGPoint(x: 100, y: 0), CGPoint(x: 150, y: 40)])
+        let poly = Shape.freeform(from: path)!
+        let s = store([poly])
+        try s.applyOperation(.fitCurve)
+        let f = s.doc.shapes[0]
+        XCTAssertTrue(f.segments.contains { if case .cubic = $0 { return true } else { return false } })
+        XCTAssertEqual(f.rect.minX, 0, accuracy: 0.01)
+    }
+
+    func testSelectionOrderAndPersistence() throws {
+        let a = rect(0, 0, 10, 10), b = rect(5, 0, 10, 10)
+        let s = store([b, a])
+        XCTAssertEqual(s.selectionOrder, [b.id, a.id])
+        s.selection.remove(b.id)
+        s.selection.insert(b.id)
+        XCTAssertEqual(s.selectionOrder, [a.id, b.id])
+        s.selection = [a.id, b.id]
+        XCTAssertEqual(s.selectionOrder, [a.id, b.id], "sélection inchangée : ordre conservé")
+
+        try s.applyOperation(.combine)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("ops-\(UUID().uuidString).cad2d")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try DiagramIO.save(s.doc, to: url)
+        let loaded = try DiagramIO.load(from: url).pages[0]
+        XCTAssertEqual(loaded, s.doc)
+        XCTAssertTrue(loaded.shapes[0].evenOdd)
+        XCTAssertTrue(SVGExporter.svg(for: loaded).contains("fill-rule=\"evenodd\""))
+    }
+}

@@ -104,7 +104,14 @@ final class DocumentStore: ObservableObject {
             document.pages[currentPage] = d
         }
     }
-    @Published var selection: Set<UUID> = []
+    @Published var selection: Set<UUID> = [] {
+        didSet { if selection != oldValue { updateSelectionOrder() } }
+    }
+    /// Sélection dans l'ordre où les éléments ont été sélectionnés : la première forme est la forme
+    /// principale des opérations (comme dans Visio). Ajouts groupés : dans l'ordre d'empilement.
+    private(set) var selectionOrder: [UUID] = []
+    /// Distance du décalage (opération « Décalage »), en unités monde : 5 mm par défaut.
+    @Published var offsetDistance: CGFloat = 5 * 72 / 25.4
     @Published var tool: Tool = .select {
         didSet { if tool.isDrawingTool { lastDrawingTool = tool } }
     }
@@ -527,6 +534,18 @@ final class DocumentStore: ObservableObject {
         default:
             return false
         }
+    }
+
+    private func updateSelectionOrder() {
+        var order = selectionOrder.filter { selection.contains($0) }
+        var known = Set(order)
+        let added = selection.subtracting(known)
+        if !added.isEmpty {
+            for s in doc.shapes where added.contains(s.id) { order.append(s.id); known.insert(s.id) }
+            for c in doc.connectors where added.contains(c.id) { order.append(c.id); known.insert(c.id) }
+            order += added.subtracting(known)
+        }
+        selectionOrder = order
     }
 
     func showError(_ message: String, _ error: Error) {

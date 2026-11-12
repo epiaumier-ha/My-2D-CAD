@@ -435,6 +435,32 @@ struct InspectorView: View {
                     iconButton("rotate.right", help: "Faire pivoter de 90° à droite (⌃R)") { store.rotateSelection(by: 90) }
                 }
             }
+            Section("Opérations") {
+                let ops = ShapeOperation.allCases.filter { $0 != .offset }
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 6) {
+                    ForEach(ops) { op in
+                        Button(op.label) { store.runOperation(op) }
+                            .disabled(!store.canApply(op))
+                            .help(op.help)
+                    }
+                }
+                HStack {
+                    let d = store.doc
+                    TextField("Distance (\(d.unit.symbol))", value: Binding<Double>(
+                        get: { d.measure(store.offsetDistance) },
+                        set: { v in
+                            let world = d.worldLength(forMeasure: v)
+                            guard world.isFinite, world > 0, world <= 10_000 else { return }
+                            store.offsetDistance = world
+                        }), format: .number.precision(.fractionLength(0...max(d.precision, 1))))
+                    Button(ShapeOperation.offset.label) { store.runOperation(.offset) }
+                        .disabled(!store.canApply(.offset))
+                        .help(ShapeOperation.offset.help)
+                }
+                Text("La première forme sélectionnée donne son format au résultat (et sert de base à Soustraire).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Section("Groupe") {
                 HStack {
                     Button("Grouper") { store.groupSelection() }.disabled(!store.canGroup)

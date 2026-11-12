@@ -74,10 +74,12 @@ struct Shape: Identifiable, Codable, Equatable {
     var textBlockWidth: Double?
     /// Cote : extrémités collées à des points d'autres formes (suivent leurs déplacements).
     var glue: [GluePoint] = []
+    /// Remplissage pair-impair (résultats des opérations sur les formes : les zones évidées restent vides).
+    var evenOdd = false
 
     enum CodingKeys: String, CodingKey {
         case id, kind, rect, text, fill, rotation, points, line, textStyle, noFill, fillTransparency, layerID, groupID
-        case segments, textOffset, textBlockWidth, glue
+        case segments, textOffset, textBlockWidth, glue, evenOdd
     }
 
     /// Couleur de remplissage effective (nil si aucun remplissage).
@@ -112,6 +114,7 @@ extension Shape {
         textOffset = try c.decodeIfPresent(CGPoint.self, forKey: .textOffset) ?? .zero
         textBlockWidth = try c.decodeIfPresent(Double.self, forKey: .textBlockWidth)
         glue = try c.decodeIfPresent([GluePoint].self, forKey: .glue) ?? []
+        evenOdd = try c.decodeIfPresent(Bool.self, forKey: .evenOdd) ?? false
     }
 }
 
