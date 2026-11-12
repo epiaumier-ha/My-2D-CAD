@@ -128,7 +128,6 @@ struct InspectorView: View {
             pane("Document") {
                 LabeledContent("Formes", value: "\(store.doc.shapes.count)")
                 LabeledContent("Connecteurs", value: "\(store.doc.connectors.count)")
-                LabeledContent("Zoom", value: "\(Int((store.zoom * 100).rounded())) %")
             }
             pageSection
             pane("Raccourcis") {
@@ -164,7 +163,7 @@ struct InspectorView: View {
         return pane("Page « \(d.name) »") {
             Picker("Unité", selection: Binding(
                 get: { d.unit },
-                set: { v in store.updatePageSettings { $0.unit = v } })) {
+                set: { v in store.updatePageSettings { $0.unit = v; $0.precision = v.defaultPrecision } })) {
                 ForEach(MeasureUnit.allCases) { Text($0.label).tag($0) }
             }
             LabeledContent("Échelle") {
@@ -174,6 +173,8 @@ struct InspectorView: View {
                         get: { d.scale },
                         set: { v in store.updatePageSettings { $0.scale = v } }),
                               format: .number.precision(.fractionLength(0...3)))
+                        .labelsHidden()
+                        .multilineTextAlignment(.trailing)
                         .frame(width: 80)
                 }
             }

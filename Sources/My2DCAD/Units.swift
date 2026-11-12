@@ -30,6 +30,16 @@ enum MeasureUnit: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// Décimales proposées quand on choisit cette unité (1 mm de précision environ, comme Visio).
+    var defaultPrecision: Int {
+        switch self {
+        case .mm, .pt: return 1
+        case .cm: return 2
+        case .m: return 3
+        case .inch: return 2
+        }
+    }
+
     var millimetres: Double {
         switch self {
         case .mm: return 1

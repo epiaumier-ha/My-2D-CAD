@@ -128,7 +128,7 @@ struct RibbonSmallButton: View {
         Button(action: action) {
             HStack(spacing: 5) {
                 Image(systemName: symbol).frame(width: 16)
-                if showTitle { Text(title).font(.caption).lineLimit(1) }
+                if showTitle { Text(title).font(.system(size: 11)).lineLimit(1) }
             }
             .frame(height: 16)
         }
@@ -151,6 +151,7 @@ struct RibbonMenu<Content: View>: View {
             Label(title, systemImage: symbol).font(.caption)
         }
         .menuStyle(.borderlessButton)
+        .controlSize(.small)
         .fixedSize()
         .frame(height: 22)
         .help(help.isEmpty ? title : help)
@@ -352,6 +353,7 @@ struct Ribbon: View {
             store.tool = current
         }
         .menuStyle(.borderlessButton)
+        .controlSize(.small)
         .fixedSize()
         .frame(height: 22)
         .padding(.horizontal, 3)
@@ -568,7 +570,7 @@ struct Ribbon: View {
             VStack(alignment: .leading, spacing: 4) {
                 Picker("Unité", selection: Binding(
                     get: { d.unit },
-                    set: { v in store.updatePageSettings { $0.unit = v } })) {
+                    set: { v in store.updatePageSettings { $0.unit = v; $0.precision = v.defaultPrecision } })) {
                     ForEach(MeasureUnit.allCases) { Text($0.label).tag($0) }
                 }
                 .frame(width: 190)
@@ -668,17 +670,21 @@ struct Ribbon: View {
                 RibbonSmallButton(title: ShapeOperation.offset.label, symbol: ShapeOperation.offset.symbol,
                                   help: ShapeOperation.offset.help) { store.runOperation(.offset) }
                     .disabled(!store.canApply(.offset))
+                HStack(spacing: 4) {
                 TextField("Distance", value: Binding<Double>(
                     get: { d.measure(store.offsetDistance) },
                     set: { v in
                         let world = d.worldLength(forMeasure: v)
                         guard world.isFinite, world > 0, world <= 10_000 else { return }
                         store.offsetDistance = world
-                    }), format: .number.precision(.fractionLength(0...max(d.precision, 1))))
+                    }), format: .number.precision(.fractionLength(0...4)))
                     .textFieldStyle(.roundedBorder)
                     .controlSize(.small)
-                    .frame(width: 80)
-                    .help("Distance du décalage (\(d.unit.symbol))")
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 70)
+                    .help("Distance du décalage")
+                Text(d.unit.symbol).font(.caption).foregroundStyle(.secondary)
+                }
             }
         }
         RibbonGroup(title: "Regroupement") {

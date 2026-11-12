@@ -530,6 +530,7 @@ struct AssistantToolbox {
         var unit = d.unit, scale = d.scale, precision = d.precision
         if let u = input["unit"] {
             guard let v = u.string.flatMap(MeasureUnit.init(rawValue:)) else { throw AssistantToolError("Unité inconnue") }
+            if v != unit { precision = v.defaultPrecision }
             unit = v
         }
         if let s = input["scale"] {
