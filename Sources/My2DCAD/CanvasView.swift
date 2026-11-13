@@ -319,7 +319,10 @@ struct CanvasView: View {
                     return
                 }
             }
-            if let s = store.hitShape(at: w) {
+            if let c = store.connectorOnTop(at: w) {
+                // Connecteur avancé au-dessus de la forme : il est sélectionné en priorité.
+                if additive { store.selection.insert(c.id) } else { store.selection = [c.id] }
+            } else if let s = store.hitShape(at: w) {
                 let now = ProcessInfo.processInfo.systemUptime
                 if !additive, let last = lastClick, last.id == s.id, now - last.time <= NSEvent.doubleClickInterval {
                     lastClick = nil
@@ -737,8 +740,8 @@ struct CanvasView: View {
 
         if store.tool == .connector {
             for s in store.doc.shapes where !s.kind.isPath && store.doc.isSelectable(s) {
-                for p in 0..<Port.count {
-                    let pt = store.toScreen(s.portPoint(p))
+                for q in s.portPoints {
+                    let pt = store.toScreen(q)
                     ctx.fill(Path(ellipseIn: CGRect(x: pt.x - 4, y: pt.y - 4, width: 8, height: 8)),
                              with: .color(.green))
                 }
@@ -927,6 +930,10 @@ struct CanvasView: View {
                     Button("Rétablir la position du texte") { store.resetTextBlocks() }
                 }
             }
+            if !store.vertexPortCandidates.isEmpty {
+                Toggle("Points de connexion aux sommets", isOn: Binding(
+                    get: { store.selectionHasVertexPorts }, set: { store.setVertexPorts($0) }))
+            }
             if !shapes.isEmpty {
                 Divider()
                 if shapes.count >= 2 {
@@ -962,6 +969,14 @@ struct CanvasView: View {
             if hasConnector || store.selectionHasGlue {
                 Divider()
                 if hasConnector { Button("Inverser le sens du connecteur") { store.reverseSelectedConnectors() } }
+                if hasConnector && shapes.isEmpty {
+                    // Connecteurs seuls : même empilement que les formes (comme Visio).
+                    Menu("Ordre") {
+                        ForEach(StackingOrder.allCases, id: \.self) { order in
+                            Button(order.label) { store.reorderSelection(order) }
+                        }
+                    }
+                }
                 if store.selectionHasGlue { Button("Décoller la cote") { store.unglueSelection() } }
             }
         }
@@ -1097,6 +1112,17 @@ struct CanvasView: View {
             let box = CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)
             ctx.fill(Path(box), with: .color(.white))
             ctx.stroke(Path(box), with: .color(accent), lineWidth: 1.5)
+        }
+
+        // Points de connexion aux sommets activés : tous les points de connexion en croix bleues (Visio).
+        if s.vertexPorts {
+            var marks = Path()
+            for p in s.portPoints.map({ store.toScreen($0) }) {
+                marks.move(to: CGPoint(x: p.x - 3.5, y: p.y - 3.5)); marks.addLine(to: CGPoint(x: p.x + 3.5, y: p.y + 3.5))
+                marks.move(to: CGPoint(x: p.x - 3.5, y: p.y + 3.5)); marks.addLine(to: CGPoint(x: p.x + 3.5, y: p.y - 3.5))
+            }
+            ctx.stroke(marks, with: .color(.white), lineWidth: 3)
+            ctx.stroke(marks, with: .color(.blue), lineWidth: 1.3)
         }
 
         drawRotationAngle(&ctx, s, knob: knob)

@@ -58,9 +58,11 @@ Xcode : ouvrir `Package.swift`, schéma « My2DCAD », ⌘R pour lancer, ⌘U po
 | `ShapeDrawing.swift` | tracé par cliquer-glisser (Maj : proportions, ⌥ : depuis le centre) |
 | `Rotation.swift` | rotation de toutes les formes, groupes, point de rotation (`pin`, `groupPin`) |
 | `Dimensions.swift` | cotes (linéaires, angulaires, rayon, diamètre) et collage aux formes |
+| `Arrange.swift` | copier-coller, alignement, ordre de superposition commun aux formes et connecteurs (`stackOrder`, `Connector.afterShape`) |
 | `ShapeOperations.swift` | Union, Combiner, Fragmenter, Intersection, Soustraire, Joindre, Rogner, Décalage, Ajuster la courbe |
 | `Paths.swift` | traits, courbes, longueur des tracés |
 | `BackgroundImage*.swift` | image d'arrière-plan de la page (incorporée, PNG/JPEG) : rognage, rotation, miroir, transparence, étalonnage, verrouillage |
+| `ConnectionPoints.swift` | points de connexion aux sommets (option par forme, indices 4 et plus) |
 | `Sheet.swift`, `Grid.swift`, `Rulers.swift` | feuille (A5–A2, personnalisée), grille métrique, échelle |
 | `Assistant*.swift` | assistant IA : Claude (API Anthropic Messages, clé dans le Trousseau) ou Apple Intelligence (`AssistantApple.swift`, FoundationModels, sur le Mac) ; mêmes outils JSON validés |
 | `Persistence.swift`, `Export.swift`, `SVG.swift` | fichiers, PDF/PNG/impression, SVG |

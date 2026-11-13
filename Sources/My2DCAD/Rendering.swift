@@ -75,10 +75,13 @@ struct DiagramPainter {
         }
     }
 
-    /// Connecteurs sous les formes, puis les formes dans leur ordre (seulement ce qui est à l'écran).
+    /// Formes et connecteurs dans l'ordre de superposition (seulement ce qui est à l'écran).
     func drawContent(_ ctx: inout GraphicsContext) {
-        for c in diagram.connectors where isDrawn(c) && isOnScreen(c) { drawConnector(c, in: &ctx) }
-        for s in diagram.shapes where isDrawn(s) && isOnScreen(s) { drawShape(s, in: &ctx) }
+        var c2 = ctx
+        diagram.forEachInStackOrder(
+            shape: { s in if isDrawn(s) && isOnScreen(s) { drawShape(s, in: &c2) } },
+            connector: { c in if isDrawn(c) && isOnScreen(c) { drawConnector(c, in: &c2) } })
+        ctx = c2
     }
 
     /// Rotation autour du centre du rectangle écran (le zoom est uniforme, l'angle est conservé).

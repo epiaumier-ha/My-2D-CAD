@@ -72,9 +72,12 @@ extension Shape {
         return CGRect(x: minX, y: minY, width: xs.max()! - minX, height: ys.max()! - minY)
     }
 
+    /// Point de connexion : 0 à 3 au milieu des côtés (haut, droite, bas, gauche), puis les sommets
+    /// de la forme si l'option est activée. Un indice inconnu revient au milieu d'un côté.
     func portPoint(_ port: Int) -> CGPoint {
+        if port >= Port.count, let v = vertexPort(port) { return toWorld(v) }
         let local: CGPoint
-        switch port {
+        switch port % Port.count {
         case 0: local = CGPoint(x: rect.midX, y: rect.minY)
         case 1: local = CGPoint(x: rect.maxX, y: rect.midY)
         case 2: local = CGPoint(x: rect.midX, y: rect.maxY)
@@ -83,13 +86,20 @@ extension Shape {
         return toWorld(local)
     }
 
-    func portDirection(_ port: Int) -> CGVector { Port.direction(port).rotated(by: angle) }
+    /// Direction de sortie d'un connecteur : perpendiculaire au côté, ou du centre vers le sommet.
+    func portDirection(_ port: Int) -> CGVector {
+        if port >= Port.count, let v = vertexPort(port) {
+            let dx = v.x - rect.midX, dy = v.y - rect.midY, len = hypot(dx, dy)
+            if len > 1e-9 { return CGVector(dx: dx / len, dy: dy / len).rotated(by: angle) }
+        }
+        return Port.direction(port % Port.count).rotated(by: angle)
+    }
 
     func nearestPort(to p: CGPoint) -> Int {
         var best = 0
         var bestDistance = CGFloat.greatestFiniteMagnitude
-        for i in 0..<Port.count {
-            let d = portPoint(i).distance(to: p)
+        for (i, q) in portPoints.enumerated() {
+            let d = q.distance(to: p)
             if d < bestDistance { bestDistance = d; best = i }
         }
         return best

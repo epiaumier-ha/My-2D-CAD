@@ -60,7 +60,10 @@ final class PersistenceTests: XCTestCase {
 
     func testRejectsInvalidPortAndRect() {
         var d = sample()
-        d.connectors[0].fromPort = 9
+        // Points 4 et plus : sommets des formes (option) ; au-delà de la borne, ou négatif : refusé.
+        d.connectors[0].fromPort = Port.maxIndex
+        XCTAssertThrowsError(try DiagramIO.validate(d))
+        d.connectors[0].fromPort = -1
         XCTAssertThrowsError(try DiagramIO.validate(d))
         var e = sample()
         e.shapes[0].rect.size.width = .infinity
@@ -2738,5 +2741,209 @@ final class BackgroundImageTests: XCTestCase {
         store.editBackground(key: "p", allowLocked: true) { $0.printable = false }
         XCTAssertNil(DiagramExporter.contentBounds(store.doc))
         XCTAssertFalse(SVGExporter.svg(for: store.doc).contains("base64"))
+    }
+}
+
+// MARK: - Points de connexion aux sommets
+
+@MainActor
+final class VertexPortsTests: XCTestCase {
+    private func assertClose(_ a: CGPoint, _ b: CGPoint, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(a.x, b.x, accuracy: 1e-6, file: file, line: line)
+        XCTAssertEqual(a.y, b.y, accuracy: 1e-6, file: file, line: line)
+    }
+
+    func testVerticesOfCommonShapes() {
+        let r = CGRect(x: 10, y: 20, width: 100, height: 60)
+        let rect = Shape(kind: .rectangle, rect: r).vertexAnchors
+        XCTAssertEqual(rect.count, 4)
+        for corner in [CGPoint(x: 10, y: 20), CGPoint(x: 110, y: 20), CGPoint(x: 110, y: 80), CGPoint(x: 10, y: 80)] {
+            XCTAssertTrue(rect.contains { $0.distance(to: corner) < 1e-6 }, "coin \(corner)")
+        }
+        XCTAssertTrue(Shape(kind: .ellipse, rect: r).vertexAnchors.isEmpty, "une ellipse n'a pas de sommet")
+        XCTAssertTrue(Shape(kind: .diamond, rect: r).vertexAnchors.isEmpty, "sommets du losange = milieux des côtés")
+        XCTAssertEqual(Shape(kind: .data, rect: r).vertexAnchors.count, 4, "parallélogramme")
+        XCTAssertTrue(Shape(kind: .text, rect: r).vertexAnchors.isEmpty)
+    }
+
+    func testVertexPortsFollowRotationAndAreOptIn() {
+        var s = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 100, height: 50))
+        s.rotation = 30
+        XCTAssertEqual(s.portCount, 4)
+        let corner = s.toWorld(CGPoint(x: 100, y: 0))
+        XCTAssertLessThan(s.nearestPort(to: corner), 4, "option désactivée : milieux seulement")
+        s.vertexPorts = true
+        XCTAssertEqual(s.portCount, 8)
+        let port = s.nearestPort(to: corner)
+        XCTAssertGreaterThanOrEqual(port, 4)
+        assertClose(s.portPoint(port), corner)
+        // Sortie du connecteur : du centre vers le sommet.
+        let d = s.portDirection(port), c = s.toWorld(CGPoint(x: 50, y: 25))
+        let expected = CGVector(dx: corner.x - c.x, dy: corner.y - c.y)
+        let len = hypot(expected.dx, expected.dy)
+        XCTAssertEqual(d.dx, expected.dx / len, accuracy: 1e-9)
+        XCTAssertEqual(d.dy, expected.dy / len, accuracy: 1e-9)
+        // Indice inconnu : retour au milieu d'un côté (fichier modifié ailleurs).
+        assertClose(s.portPoint(40), s.portPoint(0))
+    }
+
+    func testToggleFromSelectionRemapsConnectors() throws {
+        let store = DocumentStore()
+        store.insertShape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 100, height: 50))
+        let a = try XCTUnwrap(store.selection.first)
+        store.insertShape(kind: .rectangle, rect: CGRect(x: 300, y: 0, width: 100, height: 50))
+        let b = try XCTUnwrap(store.selection.first)
+        store.selection = [a]
+        XCTAssertFalse(store.selectionHasVertexPorts)
+        store.setVertexPorts(true)
+        XCTAssertTrue(store.selectionHasVertexPorts)
+        // Connecteur collé au coin haut-droit de A.
+        let shapeA = try XCTUnwrap(store.doc.shape(a))
+        let corner = shapeA.nearestPort(to: CGPoint(x: 100, y: 0))
+        XCTAssertGreaterThanOrEqual(corner, 4)
+        store.perform { $0.connectors.append(Connector(fromShape: a, fromPort: corner, toShape: b, toPort: 3)) }
+        let pts = try XCTUnwrap(store.doc.connectorPoints(store.doc.connectors[0]))
+        assertClose(pts[0], CGPoint(x: 100, y: 0))
+        XCTAssertNoThrow(try DiagramIO.validate(store.doc))
+        // Option retirée : le connecteur passe au milieu de côté le plus proche (haut ou droite).
+        store.setVertexPorts(false)
+        XCTAssertTrue([0, 1].contains(store.doc.connectors[0].fromPort))
+        store.undo()
+        XCTAssertEqual(store.doc.connectors[0].fromPort, corner)
+        XCTAssertTrue(store.doc.shape(a)?.vertexPorts ?? false)
+    }
+
+    func testNoCandidatesForShapesWithoutVertices() {
+        let store = DocumentStore()
+        store.insertShape(kind: .ellipse, rect: CGRect(x: 0, y: 0, width: 80, height: 40))
+        XCTAssertTrue(store.vertexPortCandidates.isEmpty)
+        store.setVertexPorts(true)
+        XCTAssertFalse(store.canUndo, "rien à modifier")
+    }
+
+    func testRoundTripAndValidation() throws {
+        var s = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 10, height: 10))
+        s.vertexPorts = true
+        let t = Shape(kind: .rectangle, rect: CGRect(x: 50, y: 0, width: 10, height: 10))
+        var d = Diagram(shapes: [s, t], connectors: [Connector(fromShape: s.id, fromPort: 6, toShape: t.id, toPort: 1)])
+        let decoded = try JSONDecoder().decode(Diagram.self, from: JSONEncoder().encode(d))
+        XCTAssertTrue(decoded.shapes[0].vertexPorts)
+        XCTAssertEqual(decoded.connectors[0].fromPort, 6)
+        XCTAssertNoThrow(try DiagramIO.validate(d))
+        d.connectors[0].fromPort = Port.maxIndex
+        XCTAssertThrowsError(try DiagramIO.validate(d))
+    }
+}
+
+// MARK: - Ordre de superposition des connecteurs
+
+@MainActor
+final class ConnectorStackingTests: XCTestCase {
+    /// Trois formes alignées ; connecteur droit de A à C qui passe sur B.
+    private func setup() throws -> (DocumentStore, a: UUID, b: UUID, c: UUID, conn: UUID) {
+        let store = DocumentStore()
+        var ids: [UUID] = []
+        for x in [0.0, 200.0, 400.0] {
+            store.insertShape(kind: .rectangle, rect: CGRect(x: x, y: 0, width: 100, height: 100))
+            ids.append(try XCTUnwrap(store.selection.first))
+        }
+        var conn = Connector(fromShape: ids[0], fromPort: 1, toShape: ids[2], toPort: 3)
+        conn.routing = .straight
+        store.perform { $0.connectors.append(conn) }
+        store.selection = []
+        return (store, ids[0], ids[1], ids[2], conn.id)
+    }
+
+    func testConnectorsStartBelowShapes() throws {
+        let (store, a, b, c, conn) = try setup()
+        XCTAssertEqual(store.doc.stackOrder, [.connector(conn), .shape(a), .shape(b), .shape(c)])
+        XCTAssertNil(store.connectorOnTop(at: CGPoint(x: 250, y: 50)), "la forme B est au-dessus")
+    }
+
+    func testBringConnectorForwardAndToFront() throws {
+        let (store, a, b, c, conn) = try setup()
+        store.selection = [conn]
+        store.reorderSelection(.forward)
+        XCTAssertEqual(store.doc.stackOrder, [.shape(a), .connector(conn), .shape(b), .shape(c)])
+        XCTAssertEqual(store.doc.connectors[0].afterShape, a)
+        store.reorderSelection(.front)
+        XCTAssertEqual(store.doc.stackOrder.last, .connector(conn))
+        XCTAssertEqual(store.connectorOnTop(at: CGPoint(x: 250, y: 50))?.id, conn, "le connecteur l'emporte au clic")
+        store.reorderSelection(.back)
+        XCTAssertEqual(store.doc.stackOrder.first, .connector(conn))
+        store.undo()
+        XCTAssertEqual(store.doc.stackOrder.last, .connector(conn))
+    }
+
+    func testShapesAndConnectorsReorderTogether() throws {
+        let (store, a, b, c, conn) = try setup()
+        store.selection = [conn]
+        store.reorderSelection(.front)
+        // Une forme mise au premier plan repasse au-dessus du connecteur.
+        store.selection = [b]
+        store.reorderSelection(.front)
+        XCTAssertEqual(store.doc.stackOrder, [.shape(a), .shape(c), .connector(conn), .shape(b)])
+        // Sélection mixte reculée d'un cran : l'ordre relatif est conservé.
+        store.selection = [conn, b]
+        store.reorderSelection(.backward)
+        XCTAssertEqual(store.doc.stackOrder, [.shape(a), .connector(conn), .shape(b), .shape(c)])
+    }
+
+    func testDrawingAndSVGFollowStackOrder() throws {
+        let (store, _, b, _, conn) = try setup()
+        store.selection = [conn]
+        store.reorderSelection(.front)
+        var drawn: [UUID] = []
+        store.doc.forEachInStackOrder(shape: { drawn.append($0.id) }, connector: { drawn.append($0.id) })
+        XCTAssertEqual(drawn.last, conn)
+        XCTAssertEqual(drawn.firstIndex(of: b).map { $0 < drawn.count - 1 }, true)
+        // SVG : le tracé du connecteur (sans remplissage) vient après le dernier rectangle (remplissage bleu).
+        let svg = SVGExporter.svg(for: store.doc)
+        let lastRect = try XCTUnwrap(svg.range(of: "fill=\"#deebfc\"", options: .backwards))
+        let connector = try XCTUnwrap(svg.range(of: "fill=\"none\"", options: .backwards))
+        XCTAssertLessThan(lastRect.lowerBound, connector.lowerBound)
+    }
+
+    func testDeletingTheShapeBelowKeepsConnectorPlace() throws {
+        let (store, a, b, c, conn) = try setup()
+        store.selection = [conn]
+        store.reorderSelection(.forward)
+        store.reorderSelection(.forward)   // au-dessus de B
+        XCTAssertEqual(store.doc.connectors[0].afterShape, b)
+        store.perform { $0.removeItems([b]) }
+        XCTAssertEqual(store.doc.stackOrder, [.shape(a), .connector(conn), .shape(c)])
+        XCTAssertNoThrow(try DiagramIO.validate(store.doc))
+    }
+
+    func testCopiesKeepConnectorLevel() throws {
+        let (store, a, b, c, conn) = try setup()
+        store.selection = [conn]
+        store.reorderSelection(.front)
+        store.selection = [a, b, c]
+        store.duplicateSelection()
+        let order = store.doc.stackOrder
+        XCTAssertEqual(order.count, 8)
+        XCTAssertEqual(order.last.map { if case .connector = $0 { return true } else { return false } }, true,
+                       "la copie du connecteur est au-dessus des copies des formes")
+        let copy = try XCTUnwrap(store.doc.connectors.first { $0.id != conn })
+        XCTAssertTrue(store.selection.contains(try XCTUnwrap(copy.afterShape)))
+        store.duplicatePage(0)
+        let page = store.doc
+        XCTAssertTrue(page.connectors.allSatisfy { c in c.afterShape.map { id in page.shapes.contains { $0.id == id } } ?? true })
+        XCTAssertEqual(page.stackOrder.last.map { if case .connector = $0 { return true } else { return false } }, true)
+    }
+
+    func testOldFilesKeepConnectorsBelow() throws {
+        let (store, _, _, _, _) = try setup()
+        let data = try JSONEncoder().encode(store.doc)
+        let json = String(decoding: data, as: UTF8.self)
+        XCTAssertFalse(json.contains("afterShape"))
+        let decoded = try JSONDecoder().decode(Diagram.self, from: data)
+        XCTAssertNil(decoded.connectors[0].afterShape)
+        // Forme de référence inconnue : connecteur sous les formes, fichier accepté.
+        var d = decoded
+        d.connectors[0].afterShape = UUID()
+        XCTAssertNoThrow(try DiagramIO.validate(d))
+        if case .connector = d.stackOrder.first {} else { XCTFail("connecteur en dessous") }
     }
 }

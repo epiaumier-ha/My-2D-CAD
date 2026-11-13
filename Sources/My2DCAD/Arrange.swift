@@ -101,6 +101,7 @@ extension DocumentStore {
             copy.id = UUID()
             copy.fromShape = a
             copy.toShape = b
+            copy.afterShape = c.afterShape.flatMap { idMap[$0] }
             return copy
         }
         do {
@@ -210,6 +211,66 @@ extension DocumentStore {
 
 // MARK: - Ordre de superposition
 
+/// Élément de l'empilement d'une page : forme ou connecteur.
+enum StackItem: Equatable {
+    case shape(UUID)
+    case connector(UUID)
+
+    var id: UUID {
+        switch self {
+        case .shape(let id), .connector(let id): return id
+        }
+    }
+}
+
+extension Diagram {
+    /// Parcourt formes et connecteurs du dessous vers le dessus : connecteurs sans forme de référence,
+    /// puis chaque forme suivie des connecteurs posés au-dessus d'elle.
+    func forEachInStackOrder(shape: (Shape) -> Void, connector: (Connector) -> Void) {
+        let shapeIDs = Set(shapes.map(\.id))
+        var above: [UUID: [Connector]] = [:]
+        for c in connectors {
+            if let a = c.afterShape, shapeIDs.contains(a) { above[a, default: []].append(c) } else { connector(c) }
+        }
+        for s in shapes {
+            shape(s)
+            for c in above[s.id] ?? [] { connector(c) }
+        }
+    }
+
+    /// Empilement complet, du dessous vers le dessus.
+    var stackOrder: [StackItem] {
+        var items: [StackItem] = []
+        items.reserveCapacity(shapes.count + connectors.count)
+        forEachInStackOrder(shape: { items.append(.shape($0.id)) }, connector: { items.append(.connector($0.id)) })
+        return items
+    }
+
+    /// Applique un empilement : ordre des formes, ordre des connecteurs et forme sous chaque connecteur.
+    /// Les éléments absents de `items` gardent leur place à la fin.
+    mutating func applyStackOrder(_ items: [StackItem]) {
+        var shapeByID = Dictionary(shapes.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var connectorByID = Dictionary(connectors.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var newShapes: [Shape] = []
+        var newConnectors: [Connector] = []
+        var last: UUID?
+        for item in items {
+            switch item {
+            case .shape(let id):
+                guard let s = shapeByID.removeValue(forKey: id) else { continue }
+                newShapes.append(s)
+                last = id
+            case .connector(let id):
+                guard var c = connectorByID.removeValue(forKey: id) else { continue }
+                c.afterShape = last
+                newConnectors.append(c)
+            }
+        }
+        shapes = newShapes + shapes.filter { shapeByID[$0.id] != nil }
+        connectors = newConnectors + connectors.filter { connectorByID[$0.id] != nil }
+    }
+}
+
 enum StackingOrder: CaseIterable {
     case front, forward, backward, back
 
@@ -234,38 +295,43 @@ enum StackingOrder: CaseIterable {
 
 @MainActor
 extension DocumentStore {
-    /// Change l'ordre de dessin des formes sélectionnées (l'ordre relatif entre elles est conservé).
-    /// Les connecteurs restent toujours sous les formes.
+    /// Change l'ordre de superposition des formes et des connecteurs sélectionnés (comme Visio, ils
+    /// partagent le même empilement) ; l'ordre relatif entre éléments sélectionnés est conservé.
     func reorderSelection(_ order: StackingOrder) {
         let ids = selection
-        guard doc.shapes.contains(where: { ids.contains($0.id) }) else { return }
+        guard doc.shapes.contains(where: { ids.contains($0.id) })
+                || doc.connectors.contains(where: { ids.contains($0.id) }) else { return }
         perform { d in
+            var items = d.stackOrder
             switch order {
             case .front:
-                let moved = d.shapes.filter { ids.contains($0.id) }
-                d.shapes = d.shapes.filter { !ids.contains($0.id) } + moved
+                items = items.filter { !ids.contains($0.id) } + items.filter { ids.contains($0.id) }
             case .back:
-                let moved = d.shapes.filter { ids.contains($0.id) }
-                d.shapes = moved + d.shapes.filter { !ids.contains($0.id) }
+                items = items.filter { ids.contains($0.id) } + items.filter { !ids.contains($0.id) }
             case .forward:
-                // Chaque forme sélectionnée passe au-dessus de sa voisine non sélectionnée.
-                var i = d.shapes.count - 2
+                // Chaque élément sélectionné passe au-dessus de son voisin non sélectionné.
+                var i = items.count - 2
                 while i >= 0 {
-                    if ids.contains(d.shapes[i].id) && !ids.contains(d.shapes[i + 1].id) {
-                        d.shapes.swapAt(i, i + 1)
-                    }
+                    if ids.contains(items[i].id) && !ids.contains(items[i + 1].id) { items.swapAt(i, i + 1) }
                     i -= 1
                 }
             case .backward:
                 var i = 1
-                while i < d.shapes.count {
-                    if ids.contains(d.shapes[i].id) && !ids.contains(d.shapes[i - 1].id) {
-                        d.shapes.swapAt(i, i - 1)
-                    }
+                while i < items.count {
+                    if ids.contains(items[i].id) && !ids.contains(items[i - 1].id) { items.swapAt(i, i - 1) }
                     i += 1
                 }
             }
+            d.applyStackOrder(items)
         }
+    }
+
+    /// Connecteur sous le pointeur placé au-dessus de la forme qui s'y trouve aussi (il l'emporte au clic).
+    func connectorOnTop(at world: CGPoint) -> Connector? {
+        guard let c = hitConnector(at: world), let s = hitShape(at: world) else { return nil }
+        let order = doc.stackOrder.map(\.id)
+        guard let ci = order.firstIndex(of: c.id), let si = order.firstIndex(of: s.id), ci > si else { return nil }
+        return c
     }
 
     /// Inverse le sens des connecteurs sélectionnés (la flèche change d'extrémité).
@@ -288,7 +354,7 @@ extension DocumentStore {
     func reconnect(connector id: UUID, start: Bool, to shape: UUID, port: Int) -> Bool {
         guard let i = doc.connectors.firstIndex(where: { $0.id == id }),
               let target = doc.shape(shape), !target.kind.isPath,
-              (0..<Port.count).contains(port) else { return false }
+              (0..<target.portCount).contains(port) else { return false }
         let c = doc.connectors[i]
         guard (start ? c.toShape : c.fromShape) != shape else { return false }   // pas de boucle sur une forme
         if start {

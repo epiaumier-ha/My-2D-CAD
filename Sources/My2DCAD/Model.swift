@@ -85,10 +85,12 @@ struct Shape: Identifiable, Codable, Equatable {
     /// Point de rotation du groupe de la forme (nil : centre du cadre), fraction du cadre orienté du
     /// groupe ; identique pour tous les membres.
     var groupPin: CGPoint?
+    /// Les sommets de la forme s'ajoutent aux points de connexion (milieux des côtés).
+    var vertexPorts = false
 
     enum CodingKeys: String, CodingKey {
         case id, kind, rect, text, fill, rotation, points, line, textStyle, noFill, fillTransparency, layerID, groupID
-        case segments, textOffset, textBlockWidth, glue, evenOdd, groupRotation, pin, groupPin
+        case segments, textOffset, textBlockWidth, glue, evenOdd, groupRotation, pin, groupPin, vertexPorts
     }
 
     /// Couleur de remplissage effective (nil si aucun remplissage).
@@ -127,6 +129,7 @@ extension Shape {
         groupRotation = try c.decodeIfPresent(Double.self, forKey: .groupRotation) ?? 0
         pin = try c.decodeIfPresent(CGPoint.self, forKey: .pin)
         groupPin = try c.decodeIfPresent(CGPoint.self, forKey: .groupPin)
+        vertexPorts = try c.decodeIfPresent(Bool.self, forKey: .vertexPorts) ?? false
     }
 }
 
@@ -140,8 +143,11 @@ struct Connector: Identifiable, Codable, Equatable {
     var toPort: Int
     var line = LineStyle.connectorDefault
     var routing: ConnectorRouting = .orthogonal
+    /// Ordre de superposition : le connecteur est dessiné juste au-dessus de cette forme
+    /// (nil, ou forme disparue : sous toutes les formes, comme à sa création).
+    var afterShape: UUID?
 
-    enum CodingKeys: String, CodingKey { case id, fromShape, fromPort, toShape, toPort, line, routing }
+    enum CodingKeys: String, CodingKey { case id, fromShape, fromPort, toShape, toPort, line, routing, afterShape }
 }
 
 extension Connector {
@@ -154,6 +160,7 @@ extension Connector {
         toPort = try c.decode(Int.self, forKey: .toPort)
         line = try c.decodeIfPresent(LineStyle.self, forKey: .line) ?? .connectorDefault
         routing = try c.decodeIfPresent(ConnectorRouting.self, forKey: .routing) ?? .orthogonal
+        afterShape = try c.decodeIfPresent(UUID.self, forKey: .afterShape)
     }
 }
 
@@ -230,6 +237,17 @@ struct Diagram: Codable, Equatable {
     }
 
     mutating func removeItems(_ ids: Set<UUID>) {
+        // Connecteurs posés au-dessus d'une forme supprimée : ils gardent leur place dans l'empilement.
+        if connectors.contains(where: { $0.afterShape.map(ids.contains) ?? false }) {
+            var below: [UUID: UUID?] = [:]
+            var last: UUID?
+            for s in shapes {
+                if ids.contains(s.id) { below[s.id] = last } else { last = s.id }
+            }
+            for i in connectors.indices {
+                if let a = connectors[i].afterShape, let b = below[a] { connectors[i].afterShape = b }
+            }
+        }
         shapes.removeAll { ids.contains($0.id) }
         // Cotes collées à une forme supprimée : elles restent en place, décollées.
         for i in shapes.indices where !shapes[i].glue.isEmpty {

@@ -66,6 +66,7 @@ extension DocumentStore {
             copy.connectors[i].id = UUID()
             copy.connectors[i].fromShape = shapeMap[copy.connectors[i].fromShape] ?? copy.connectors[i].fromShape
             copy.connectors[i].toShape = shapeMap[copy.connectors[i].toShape] ?? copy.connectors[i].toShape
+            copy.connectors[i].afterShape = copy.connectors[i].afterShape.flatMap { shapeMap[$0] }
         }
         performDocument { $0.pages.insert(copy, at: index + 1) }
         selectPage(index + 1)

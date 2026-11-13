@@ -672,7 +672,9 @@ final class DocumentStore: ObservableObject {
             // Clic droit : la forme sous le pointeur est sélectionnée avant l'ouverture du menu contextuel.
             guard mouseInCanvas, let p = hover, editingShapeID == nil else { return e }
             let w = toWorld(p)
-            if let s = hitShape(at: w) {
+            if let c = connectorOnTop(at: w) {
+                if !selection.contains(c.id) { selection = [c.id] }
+            } else if let s = hitShape(at: w) {
                 if !selection.contains(s.id) { selection = [s.id] }
             } else if let c = hitConnector(at: w) {
                 if !selection.contains(c.id) { selection = [c.id] }

@@ -175,7 +175,7 @@ enum DiagramIO {
                 throw DiagramIOError.invalid("connecteur orphelin")
             }
             guard c.line.isValid else { throw DiagramIOError.invalid("style de connecteur invalide") }
-            guard (0..<Port.count).contains(c.fromPort), (0..<Port.count).contains(c.toPort) else {
+            guard (0..<Port.maxIndex).contains(c.fromPort), (0..<Port.maxIndex).contains(c.toPort) else {
                 throw DiagramIOError.invalid("point de connexion invalide")
             }
         }

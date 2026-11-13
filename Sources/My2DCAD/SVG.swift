@@ -21,8 +21,11 @@ enum SVGExporter {
 
         """
         if let bg = painter.drawnBackground { out += backgroundElement(bg) }
-        for c in page.connectors where painter.isDrawn(c) {
-            guard let pts = page.connectorPoints(c, context: painter.routing), pts.count > 1 else { continue }
+        // Formes et connecteurs dans l'ordre de superposition.
+        page.forEachInStackOrder(shape: { s in
+            if painter.isDrawn(s) { out += shapeElement(s, painter: painter) }
+        }, connector: { c in
+            guard painter.isDrawn(c), let pts = page.connectorPoints(c, context: painter.routing), pts.count > 1 else { return }
             var path = Path()
             path.move(to: pts[0])
             for p in pts.dropFirst() { path.addLine(to: p) }
@@ -34,10 +37,7 @@ enum SVGExporter {
             if let prev = pts.dropLast().last(where: { $0.distance(to: tip) > 0.5 }) {
                 out += arrow(c.line.endArrow, tip: tip, from: prev, style: c.line)
             }
-        }
-        for s in page.shapes where painter.isDrawn(s) {
-            out += shapeElement(s, painter: painter)
-        }
+        })
         out += "</g>\n</svg>\n"
         return out
     }

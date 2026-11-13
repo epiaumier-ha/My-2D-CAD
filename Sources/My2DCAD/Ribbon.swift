@@ -742,6 +742,14 @@ struct Ribbon: View {
                 }
             }
             .disabled(store.selection.isEmpty)
+            column {
+                RibbonSmallButton(title: "Points de connexion aux sommets", symbol: "point.3.connected.trianglepath.dotted",
+                                  help: "Ajouter les sommets de la forme à ses points de connexion (milieux des côtés conservés)",
+                                  active: store.selectionHasVertexPorts) {
+                    store.setVertexPorts(!store.selectionHasVertexPorts)
+                }
+                .disabled(store.vertexPortCandidates.isEmpty)
+            }
         }
     }
 }
