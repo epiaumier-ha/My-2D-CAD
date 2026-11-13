@@ -583,6 +583,8 @@ final class SVGImporter: NSObject, XMLParserDelegate {
 
 enum SVGPathParser {
     static let maxCommands = 50_000
+    /// Coordonnée maximale d'un tracé (unités SVG, avant transformation) : protège les calculs.
+    static let maxCoordinate: CGFloat = 1e9
 
     private enum Token { case command(Character), number(CGFloat) }
 
@@ -644,9 +646,13 @@ enum SVGPathParser {
             i += 1
             return v
         }
+        /// Point dans les limites (fichier non fiable) : au-delà, le tracé s'arrête là.
+        func bounded(_ p: CGPoint) -> CGPoint? {
+            p.x.isFinite && p.y.isFinite && abs(p.x) <= maxCoordinate && abs(p.y) <= maxCoordinate ? p : nil
+        }
         func point(_ rel: Bool) -> CGPoint? {
             guard let x = next(), let y = next() else { return nil }
-            return rel ? CGPoint(x: cur.x + x, y: cur.y + y) : CGPoint(x: x, y: y)
+            return bounded(rel ? CGPoint(x: cur.x + x, y: cur.y + y) : CGPoint(x: x, y: y))
         }
 
         while i < tokens.count && commands < maxCommands {
@@ -663,11 +669,15 @@ enum SVGPathParser {
                 guard let p = point(rel) else { return path.isEmpty ? nil : path }
                 path.addLine(to: p); cur = p; lastCubic = nil; lastQuad = nil
             case "H":
-                guard let x = next() else { return path.isEmpty ? nil : path }
-                cur = CGPoint(x: rel ? cur.x + x : x, y: cur.y); path.addLine(to: cur); lastCubic = nil; lastQuad = nil
+                guard let x = next(), let p = bounded(CGPoint(x: rel ? cur.x + x : x, y: cur.y)) else {
+                    return path.isEmpty ? nil : path
+                }
+                cur = p; path.addLine(to: cur); lastCubic = nil; lastQuad = nil
             case "V":
-                guard let y = next() else { return path.isEmpty ? nil : path }
-                cur = CGPoint(x: cur.x, y: rel ? cur.y + y : y); path.addLine(to: cur); lastCubic = nil; lastQuad = nil
+                guard let y = next(), let p = bounded(CGPoint(x: cur.x, y: rel ? cur.y + y : y)) else {
+                    return path.isEmpty ? nil : path
+                }
+                cur = p; path.addLine(to: cur); lastCubic = nil; lastQuad = nil
             case "C":
                 guard let c1 = point(rel), let c2 = point(rel), let p = point(rel) else { return path.isEmpty ? nil : path }
                 path.addCurve(to: p, control1: c1, control2: c2); cur = p; lastCubic = c2; lastQuad = nil
@@ -724,6 +734,8 @@ enum SVGPathParser {
         let theta1 = angle(1, 0, (x1 - cxp) / rx, (y1 - cyp) / ry)
         var delta = angle((x1 - cxp) / rx, (y1 - cyp) / ry, (-x1 - cxp) / rx, (-y1 - cyp) / ry)
         if !sweep && delta > 0 { delta -= 2 * .pi } else if sweep && delta < 0 { delta += 2 * .pi }
+        // Valeurs extrêmes (dépassement de capacité) : l'arc est remplacé par un segment droit.
+        guard [rx, ry, cx, cy, theta1, delta].allSatisfy(\.isFinite) else { return [(p0, p, p)] }
         let count = max(Int(ceil(abs(delta) / (.pi / 2))), 1)
         let step = delta / CGFloat(count)
         let t = 4 / 3 * tan(step / 4)

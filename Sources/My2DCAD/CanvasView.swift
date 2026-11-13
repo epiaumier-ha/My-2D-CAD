@@ -586,7 +586,7 @@ struct CanvasView: View {
             }
         }
 
-        drawSelection(&ctx)
+        drawSelection(&ctx, painter: painter)
         drawRulerGuides(&ctx, size: size)
         drawGuides(&ctx)
         drawInteractionPreview(&ctx)
@@ -824,10 +824,12 @@ struct CanvasView: View {
         }
     }
 
-    private func drawSelection(_ ctx: inout GraphicsContext) {
+    /// `painter` : le peintre de l'image en cours, dont l'index des formes et le routage sont partagés
+    /// (un contexte de routage par connecteur sélectionné coûterait O(formes) chacun).
+    private func drawSelection(_ ctx: inout GraphicsContext, painter: DiagramPainter) {
         // Connecteurs sélectionnés : surlignage.
         for c in store.doc.connectors where store.selection.contains(c.id) {
-            guard let pts = store.doc.connectorPoints(c), pts.count > 1 else { continue }
+            guard let pts = store.doc.connectorPoints(c, context: painter.routing), pts.count > 1 else { continue }
             var path = Path()
             path.move(to: store.toScreen(pts[0]))
             for p in pts.dropFirst() { path.addLine(to: store.toScreen(p)) }

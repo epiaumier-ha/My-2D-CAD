@@ -582,7 +582,10 @@ struct AssistantToolbox {
             scale = v
         }
         if let p = input["precision"] {
-            guard let v = p.double, (0...4).contains(Int(v)) else { throw AssistantToolError("Précision : 0 à 4") }
+            // Contrôle avant conversion : Int(v) planterait sur une valeur hors de la plage des entiers.
+            guard let v = p.double, (0...4).contains(v), v == v.rounded() else {
+                throw AssistantToolError("Précision : entier de 0 à 4")
+            }
             precision = Int(v)
         }
         if let v = input["grid_spacing"] {

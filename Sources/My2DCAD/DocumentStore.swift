@@ -174,7 +174,11 @@ final class DocumentStore: ObservableObject {
     @Published private(set) var redoStack: [HistoryEntry] = []
     private let maxUndo = 100
     private var transactionStart: HistoryEntry?
-    private var assistantEditStart: HistoryEntry?
+    private var assistantEditStart: HistoryEntry? {
+        didSet { isAssistantEditing = assistantEditStart != nil }
+    }
+    /// L'assistant modifie le dessin : Annuler et Rétablir sont indisponibles jusqu'à la fin de sa réponse.
+    @Published private(set) var isAssistantEditing = false
     private var coalesceKey: String?
 
     // État non publié
@@ -195,8 +199,8 @@ final class DocumentStore: ObservableObject {
 
     static let fileType = UTType(filenameExtension: "cad2d", conformingTo: .json) ?? .json
 
-    var canUndo: Bool { !undoStack.isEmpty }
-    var canRedo: Bool { !redoStack.isEmpty }
+    var canUndo: Bool { !undoStack.isEmpty && !isAssistantEditing }
+    var canRedo: Bool { !redoStack.isEmpty && !isAssistantEditing }
 
     var title: String {
         (fileURL?.lastPathComponent ?? "Sans titre") + (isDirty ? " — modifié" : "")
@@ -280,14 +284,14 @@ final class DocumentStore: ObservableObject {
     }
 
     func undo() {
-        guard let previous = undoStack.popLast() else { return }
+        guard canUndo, let previous = undoStack.popLast() else { return }
         editingShapeID = nil
         redoStack.append(snapshot())
         restore(previous)
     }
 
     func redo() {
-        guard let next = redoStack.popLast() else { return }
+        guard canRedo, let next = redoStack.popLast() else { return }
         editingShapeID = nil
         undoStack.append(snapshot())
         restore(next)

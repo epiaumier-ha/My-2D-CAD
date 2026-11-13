@@ -2172,3 +2172,86 @@ final class LineLengthTests: XCTestCase {
         XCTAssertNil(Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 10, height: 10)).pathLength)
     }
 }
+
+/// Audit de novembre 2026 : valeurs extrêmes (fichiers et assistant non fiables), historique pendant
+/// une réponse de l'assistant, surlignage des connecteurs sélectionnés.
+@MainActor
+final class RobustnessTests: XCTestCase {
+    func testSVGArcWithExtremeValuesDoesNotCrash() throws {
+        // Ces arcs faisaient planter l'application (Int(NaN) dans la conversion en courbes de Bézier).
+        let arcs = SVGPathParser.arcToBeziers(from: .zero, rx: 1, ry: 1, rotation: 0, largeArc: false, sweep: true,
+                                              to: CGPoint(x: 1e100, y: -1e100))
+        XCTAssertEqual(arcs.count, 1, "arc incalculable remplacé par un segment droit")
+        XCTAssertTrue(arcs.allSatisfy { [$0.0, $0.1, $0.2].allSatisfy { $0.x.isFinite && $0.y.isFinite } })
+        let extremes: [CGFloat] = [1e-300, 1, 1e100, 1e200, 1.7e308]
+        for rx in extremes {
+            for ry in extremes {
+                for x in extremes {
+                    for rot: CGFloat in [0, 45, 1e300] {
+                        _ = SVGPathParser.arcToBeziers(from: .zero, rx: rx, ry: ry, rotation: rot, largeArc: true,
+                                                       sweep: false, to: CGPoint(x: x, y: -x))
+                    }
+                }
+            }
+        }
+        // Points hors limites : le tracé s'arrête au dernier point valide.
+        let p = SVGPathParser.parse("M0 0 L10 10 A1 1 0 0 1 1e100 -1e100 L20 20")
+        XCTAssertNotNil(p)
+        XCTAssertNil(SVGPathParser.parse("M1e300 0 L10 10"))
+        XCTAssertNotNil(SVGPathParser.parse("M0 0 l1e308 0 l1e308 0"), "dépassement en coordonnées relatives")
+        XCTAssertNotNil(SVGPathParser.parse("M0 0 h1e308 h1e308 v1e308"))
+        // Import complet d'un fichier piégé : pas de plantage, les formes valides sont gardées.
+        let svg = #"<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0 A1 1 0 0 1 1e100 -1e100"/><rect x="0" y="0" width="10" height="10"/></svg>"#
+        let shapes = (try? SVGImporter.shapes(from: Data(svg.utf8))) ?? []
+        XCTAssertFalse(shapes.isEmpty)
+        XCTAssertNoThrow(try DiagramIO.validate(Diagram(shapes: shapes)))
+    }
+
+    func testAssistantPrecisionIsCheckedBeforeConversion() {
+        let store = DocumentStore()
+        let tools = AssistantToolbox(store: store)
+        // Int(1e20) planterait : la valeur est refusée avant toute conversion.
+        for bad: JSONValue in [.number(1e20), .number(-1e20), .number(2.5), .number(5), .int(-1), .string("2")] {
+            XCTAssertTrue(tools.run("set_page", ["precision": bad]).isError, "\(bad)")
+        }
+        XCTAssertFalse(tools.run("set_page", ["precision": .int(3)]).isError)
+        XCTAssertEqual(store.doc.precision, 3)
+        XCTAssertFalse(tools.run("set_page", ["precision": .number(2.0)]).isError)
+        XCTAssertEqual(store.doc.precision, 2)
+    }
+
+    func testUndoIsBlockedWhileAssistantEdits() {
+        let store = DocumentStore()
+        store.perform { $0.shapes.append(Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 10, height: 10))) }
+        XCTAssertTrue(store.canUndo)
+        store.beginAssistantEdit()
+        XCTAssertFalse(store.canUndo, "Annuler indisponible pendant la réponse de l'assistant")
+        store.undo()
+        XCTAssertEqual(store.doc.shapes.count, 1, "⌘Z sans effet pendant la réponse")
+        store.doc.shapes.append(Shape(kind: .ellipse, rect: CGRect(x: 20, y: 0, width: 10, height: 10)))
+        store.endAssistantEdit()
+        XCTAssertTrue(store.canUndo)
+        store.undo()
+        XCTAssertEqual(store.doc.shapes.count, 1, "la réponse de l'assistant s'annule en une étape")
+        XCTAssertTrue(store.canRedo)
+        store.beginAssistantEdit()
+        XCTAssertFalse(store.canRedo)
+        store.redo()
+        XCTAssertEqual(store.doc.shapes.count, 1)
+        store.endAssistantEdit()
+        store.redo()
+        XCTAssertEqual(store.doc.shapes.count, 2)
+    }
+
+    func testSharedRoutingGivesSameConnectorPath() {
+        var d = Diagram()
+        let a = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 50, height: 50))
+        let b = Shape(kind: .rectangle, rect: CGRect(x: 200, y: 150, width: 50, height: 50))
+        let obstacle = Shape(kind: .rectangle, rect: CGRect(x: 90, y: 60, width: 60, height: 60))
+        d.shapes = [a, b, obstacle]
+        let c = Connector(fromShape: a.id, fromPort: 1, toShape: b.id, toPort: 3)
+        d.connectors = [c]
+        let painter = DiagramPainter(diagram: d, zoom: 1, offset: .zero)
+        XCTAssertEqual(d.connectorPoints(c, context: painter.routing), d.connectorPoints(c))
+    }
+}
