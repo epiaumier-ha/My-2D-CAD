@@ -11,6 +11,9 @@ existe dans Visio, reproduis son comportement et son vocabulaire.
 - Après chaque modification : compiler sans **aucun avertissement** (Sendable / MainActor compris),
   ajouter des tests, lancer les tests concernés, puis résumer le résultat en quelques lignes.
 - Commits petits et explicites ; pousser sur `main` quand la modification est terminée et testée.
+- Après chaque push sur `main` qui touche `Sources/` : mettre à jour l'application installée avec
+  `scripts/package.sh --install` (sans demander), puis le signaler dans le résumé. Le script ferme
+  l'app normalement (proposition d'enregistrer) ; si Emmanuel annule, l'installation est abandonnée.
 
 ## Construire et tester
 

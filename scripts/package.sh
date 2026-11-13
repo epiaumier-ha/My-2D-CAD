@@ -94,6 +94,9 @@ else
 fi
 codesign --verify --strict "$APP"
 
+# Seule la dernière version est gardée dans dist/.
+rm -f "$DIST/$APP_NAME"-*.dmg "$DIST/$APP_NAME"-*.pkg
+
 step "Image disque (.dmg)"
 DMG="$DIST/$APP_NAME-$VERSION.dmg"
 STAGE="$WORK/dmg"
@@ -120,12 +123,33 @@ ls -lh "$DMG" "$PKG"
 
 if $INSTALL; then
   step "Installation dans /Applications (depuis le .dmg)"
-  pkill -x "$APP_NAME" 2>/dev/null && sleep 1 || true
+  # App installée ouverte : fermeture normale (comme ⌘Q), qui propose d'enregistrer le dessin.
+  # Si l'utilisateur annule, rien n'est remplacé. La version lancée par « swift run » n'est pas concernée.
+  WAS_RUNNING=false
+  if pgrep -f "/Applications/$APP_NAME.app/Contents/MacOS/$APP_NAME" >/dev/null; then
+    WAS_RUNNING=true
+    print "My2DCAD est ouverte : demande de fermeture (enregistrez votre dessin si on vous le propose)…"
+    cat > "$WORK/quit.swift" <<'SWIFT'
+import AppKit
+for app in NSRunningApplication.runningApplications(withBundleIdentifier: CommandLine.arguments[1]) { app.terminate() }
+SWIFT
+    swift "$WORK/quit.swift" "$BUNDLE_ID"
+    for _ in {1..120}; do
+      pgrep -f "/Applications/$APP_NAME.app/Contents/MacOS/$APP_NAME" >/dev/null || break
+      sleep 1
+    done
+    if pgrep -f "/Applications/$APP_NAME.app/Contents/MacOS/$APP_NAME" >/dev/null; then
+      print -u2 "My2DCAD est toujours ouverte (fermeture annulée) : installation abandonnée. Les packages sont dans dist/."
+      exit 1
+    fi
+  fi
   MOUNT=$(mktemp -d)
   hdiutil attach -quiet -nobrowse -readonly -mountpoint "$MOUNT" "$DMG"
   trap 'hdiutil detach -quiet "$MOUNT" 2>/dev/null || true; rmdir "$MOUNT" 2>/dev/null || true; rm -rf "$WORK"' EXIT
   rm -rf "/Applications/$APP_NAME.app"
   ditto --norsrc --noextattr "$MOUNT/$APP_NAME.app" "/Applications/$APP_NAME.app"
   codesign --verify --strict "/Applications/$APP_NAME.app"
-  print "Installée : /Applications/$APP_NAME.app"
+  print "Installée : /Applications/$APP_NAME.app ($VERSION)"
+  # L'app était ouverte : elle est rouverte dans sa nouvelle version.
+  if $WAS_RUNNING; then open "/Applications/$APP_NAME.app"; print "Rouverte."; fi
 fi
