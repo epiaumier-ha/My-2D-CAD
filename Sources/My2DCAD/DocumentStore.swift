@@ -115,8 +115,14 @@ final class DocumentStore: ObservableObject {
     /// Distance du décalage (opération « Décalage »), en unités monde : 5 mm par défaut.
     @Published var offsetDistance: CGFloat = 5 * 72 / 25.4
     @Published var tool: Tool = .select {
-        didSet { if tool.isDrawingTool { lastDrawingTool = tool } }
+        didSet {
+            if tool.isDrawingTool { lastDrawingTool = tool }
+            // Choisir un outil remplace la forme de bibliothèque en attente de tracé.
+            activeStencil = nil
+        }
     }
+    /// Forme de bibliothèque choisie dans le volet Formes, à tracer sur la feuille par cliquer-glisser.
+    @Published var activeStencil: StencilItem?
     /// Dernier outil de dessin utilisé (affiché sur le bouton « Dessin »).
     @Published private(set) var lastDrawingTool: Tool = .rectangle
 
@@ -678,8 +684,8 @@ final class DocumentStore: ObservableObject {
                 guard !selection.isEmpty else { return e }
                 deleteSelection(); return nil
             case 53:
-                // Échap : quitte l'outil en cours, puis désélectionne.
-                if tool != .select { tool = .select } else { selection = [] }
+                // Échap : quitte l'outil ou la forme de bibliothèque en cours, puis désélectionne.
+                if tool != .select || activeStencil != nil { tool = .select } else { selection = [] }
                 return nil
             case 36, 76, 120:
                 // Entrée, Entrée du pavé numérique ou F2 : éditer le texte de la forme sélectionnée.

@@ -85,7 +85,25 @@ extension DocumentStore {
     /// Points d'une nouvelle forme : trait direct, ou courbe dont le point de contrôle
     /// est décalé perpendiculairement (à ajuster ensuite avec sa poignée).
     static func initialPathPoints(kind: ShapeKind, from a: CGPoint, to b: CGPoint) -> [CGPoint] {
-        if kind == .dimension { return makeDimensionPoints(a, b, offset: 24) }
+        switch kind {
+        case .dimension:
+            return makeDimensionPoints(a, b, offset: 24)
+        case .dimensionHorizontal:
+            // Ligne de cote au-dessus des deux points mesurés.
+            return [a, b, CGPoint(x: (a.x + b.x) / 2, y: min(a.y, b.y) - 24)]
+        case .dimensionVertical:
+            // Ligne de cote à gauche des deux points mesurés.
+            return [a, b, CGPoint(x: min(a.x, b.x) - 24, y: (a.y + b.y) / 2)]
+        case .angularDimension:
+            // Angle tracé dans le cadre du glisser, sommet en bas à gauche.
+            return initialDimensionPoints(kind: kind, in: CGRect(x: min(a.x, b.x), y: min(a.y, b.y),
+                                                                 width: abs(b.x - a.x), height: abs(b.y - a.y)))
+        case .radiusDimension, .diameterDimension:
+            // Du centre vers le bord.
+            return [a, b]
+        default:
+            break
+        }
         guard kind == .curve else { return [a, b] }
         let mid = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
         let control = CGPoint(x: mid.x - (b.y - a.y) * 0.25, y: mid.y + (b.x - a.x) * 0.25)
@@ -93,10 +111,11 @@ extension DocumentStore {
     }
 
     /// Ajout direct (à utiliser à l'intérieur d'une transaction, comme insertShape).
-    func insertPath(kind: ShapeKind, from a: CGPoint, to b: CGPoint) {
+    /// `line` : style imposé (cotes d'ingénierie ou d'architecture de la bibliothèque).
+    func insertPath(kind: ShapeKind, from a: CGPoint, to b: CGPoint, line: LineStyle? = nil) {
         guard kind.isPath, doc.shapes.count < DiagramIO.maxShapes else { return }
         var s = Shape(kind: kind, rect: .zero, fill: Self.defaultLineColor,
-                      line: kind.isDimension ? .dimensionDefault : .pathDefault)
+                      line: line ?? (kind.isDimension ? .dimensionDefault : .pathDefault))
         var points = Self.initialPathPoints(kind: kind, from: a, to: b)
         if kind.isDimension {
             // Cote tracée d'un point de collage à l'autre (coin, milieu, centre) : elle est collée.

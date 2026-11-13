@@ -46,6 +46,9 @@ struct StatusBar: View {
 
     /// Aide contextuelle selon l'outil (raccourcis utiles).
     private var hint: String {
+        if let item = store.activeStencil {
+            return "\(item.name) : glisser pour tracer · Maj : proportions · ⌥ : depuis le centre · Échap : annuler"
+        }
         switch store.tool {
         case .select:
             if let s = store.singleSelectedShape, s.kind.isDimension {
@@ -59,12 +62,12 @@ struct StatusBar: View {
             }
             return "Glisser une forme du volet Formes · Glisser sur le vide : sélection multiple · Espace : déplacer la vue"
         case .pan: return "Glisser pour déplacer la vue · V : pointeur"
-        case .text: return "Clic ou glisser pour créer un texte · Échap : pointeur"
+        case .text: return "Glisser pour tracer la zone de texte · ⌥ : depuis le centre · Échap : pointeur"
         case .connector: return "Glisser d'une forme à une autre · Échap : pointeur"
-        case .line: return "Glisser pour tracer · Maj : 45° · Échap : pointeur"
-        case .dimension: return "Glisser d'un point à l'autre (coin, milieu, centre : la cote est collée) · Maj : 45° · Échap : pointeur"
-        case .curve: return "Glisser, puis régler la courbure avec la poignée ronde · Échap : pointeur"
-        case .rectangle, .ellipse, .diamond: return "Clic : taille par défaut · Glisser : taille libre · Échap : pointeur"
+        case .line: return "Glisser pour tracer · Maj : 45° · ⌥ : depuis le centre · Échap : pointeur"
+        case .dimension: return "Glisser d'un point à l'autre (coin, milieu, centre : la cote est collée) · Maj : 45° · ⌥ : depuis le centre · Échap : pointeur"
+        case .curve: return "Glisser, puis régler la courbure avec la poignée ronde · Maj : 45° · ⌥ : depuis le centre · Échap : pointeur"
+        case .rectangle, .ellipse, .diamond: return "Glisser pour tracer · Maj : carré / cercle · ⌥ : depuis le centre · Échap : pointeur"
         }
     }
 

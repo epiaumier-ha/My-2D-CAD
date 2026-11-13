@@ -1843,3 +1843,79 @@ final class PageCenteringTests: XCTestCase {
         XCTAssertEqual(centre.y, store.doc.sheetRect.midY, accuracy: 1e-6)
     }
 }
+
+@MainActor
+final class ShapeDrawingTests: XCTestCase {
+    func testSimpleClickIsNotADrag() {
+        let p = CGPoint(x: 100, y: 100)
+        XCTAssertFalse(ShapeDrawing.isDrag(from: p, to: p, zoom: 1), "simple clic : rien n'est créé")
+        XCTAssertFalse(ShapeDrawing.isDrag(from: p, to: CGPoint(x: 103, y: 101), zoom: 1))
+        XCTAssertTrue(ShapeDrawing.isDrag(from: p, to: CGPoint(x: 110, y: 100), zoom: 1))
+        XCTAssertFalse(ShapeDrawing.isDrag(from: p, to: CGPoint(x: 104, y: 100), zoom: 1), "5 px écran au moins")
+        XCTAssertTrue(ShapeDrawing.isDrag(from: p, to: CGPoint(x: 104, y: 100), zoom: 2))
+    }
+
+    func testFreeRectangleFollowsTheDragInAnyDirection() {
+        let r = ShapeDrawing.rect(from: CGPoint(x: 100, y: 100), to: CGPoint(x: 40, y: 160),
+                                  kind: .rectangle, aspect: nil, fromCenter: false)
+        XCTAssertEqual(r, CGRect(x: 40, y: 100, width: 60, height: 60))
+    }
+
+    func testShiftKeepsProportionsAndOptionDrawsFromTheCentre() {
+        let square = ShapeDrawing.rect(from: .zero, to: CGPoint(x: 80, y: 30), kind: .ellipse, aspect: 1, fromCenter: false)
+        XCTAssertEqual(square, CGRect(x: 0, y: 0, width: 80, height: 80))
+        let upLeft = ShapeDrawing.rect(from: .zero, to: CGPoint(x: -30, y: -90), kind: .rectangle, aspect: 2, fromCenter: false)
+        XCTAssertEqual(upLeft, CGRect(x: -180, y: -90, width: 180, height: 90))
+        let centred = ShapeDrawing.rect(from: CGPoint(x: 50, y: 50), to: CGPoint(x: 70, y: 60),
+                                        kind: .rectangle, aspect: nil, fromCenter: true)
+        XCTAssertEqual(centred, CGRect(x: 30, y: 40, width: 40, height: 20))
+    }
+
+    func testFlatDragGivesAMinimumHeight() {
+        let r = ShapeDrawing.rect(from: .zero, to: CGPoint(x: 100, y: 0), kind: .rectangle, aspect: nil, fromCenter: false)
+        XCTAssertEqual(r.width, 100)
+        XCTAssertEqual(r.height, ShapeDrawing.minimumSize(for: .rectangle).height)
+    }
+
+    func testSegmentAngleConstraintAndCentre() {
+        let s = ShapeDrawing.segment(from: .zero, to: CGPoint(x: 100, y: 8), constrainAngle: true, fromCenter: false)
+        XCTAssertEqual(s.end.y, 0, accuracy: 1e-9)
+        XCTAssertEqual(s.end.x, hypot(100, 8), accuracy: 1e-9)
+        let c = ShapeDrawing.segment(from: CGPoint(x: 10, y: 10), to: CGPoint(x: 30, y: 10), constrainAngle: false, fromCenter: true)
+        XCTAssertEqual(c.start, CGPoint(x: -10, y: 10))
+        XCTAssertEqual(c.end, CGPoint(x: 30, y: 10))
+    }
+
+    func testLibraryShapeIsArmedThenDrawnInTheDraggedFrame() throws {
+        let store = DocumentStore()
+        let item = try XCTUnwrap(StencilCatalog.libraries.first?.items.first)
+        store.armStencil(item)
+        XCTAssertEqual(store.activeStencil?.id, item.id)
+        XCTAssertTrue(store.doc.shapes.isEmpty, "un clic sur la vignette n'insère rien")
+
+        let r = CGRect(x: 10, y: 20, width: 200, height: 90)
+        store.insertStencil(item, in: r)
+        XCTAssertEqual(store.doc.shapes.count, 1)
+        XCTAssertEqual(store.doc.shapes[0].kind, item.kind)
+        XCTAssertEqual(store.doc.shapes[0].rect, r)
+        XCTAssertEqual(store.activeStencil?.id, item.id, "la forme reste choisie pour en tracer d'autres")
+
+        store.armStencil(item)
+        XCTAssertNil(store.activeStencil, "second clic : abandon")
+        store.armStencil(item)
+        store.tool = .rectangle
+        XCTAssertNil(store.activeStencil, "choisir un outil abandonne la forme de bibliothèque")
+    }
+
+    func testLibraryDimensionKeepsItsStyle() throws {
+        let store = DocumentStore()
+        let item = try XCTUnwrap(StencilCatalog.libraries.first { $0.id == "dimensions" }?.items
+            .first { $0.kind == .dimensionHorizontal && $0.variant == "architecture" })
+        store.insertPath(kind: item.kind, from: CGPoint(x: 0, y: 100), to: CGPoint(x: 200, y: 100), line: item.line)
+        let s = try XCTUnwrap(store.doc.shapes.first)
+        XCTAssertEqual(s.kind, .dimensionHorizontal)
+        XCTAssertEqual(s.line, item.line)
+        XCTAssertFalse(store.doc.dimensionMeasure(s).isEmpty)
+        XCTAssertNoThrow(try DiagramIO.validate(store.doc))
+    }
+}

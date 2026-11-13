@@ -142,6 +142,27 @@ extension DocumentStore {
         selection = [shape.id]
         tool = .select
     }
+
+    /// Choisit une forme de bibliothèque : elle se trace ensuite sur la feuille par cliquer-glisser.
+    /// Un second clic sur la même forme l'abandonne.
+    func armStencil(_ item: StencilItem) {
+        endTextEditing()
+        if activeStencil?.id == item.id {
+            activeStencil = nil
+            return
+        }
+        tool = .select
+        activeStencil = item
+    }
+
+    /// Forme de bibliothèque tracée dans le cadre r (à utiliser dans une transaction, comme insertShape).
+    func insertStencil(_ item: StencilItem, in r: CGRect) {
+        guard doc.shapes.count < DiagramIO.maxShapes, r.width > 0, r.height > 0 else { return }
+        var shape = StencilCatalog.makeShape(item, in: r)
+        shape.layerID = doc.activeLayerID
+        doc.shapes.append(shape)
+        selection = [shape.id]
+    }
 }
 
 // MARK: - Panneau des bibliothèques
@@ -188,7 +209,7 @@ struct StencilPanel: View {
                 .padding(8)
             }
             Divider()
-            Text("Glissez une forme sur le dessin, ou cliquez pour l'ajouter au centre.")
+            Text("Cliquez une forme puis tracez-la sur la feuille par cliquer-glisser (Maj : proportions, ⌥ : depuis le centre, Échap : annuler), ou glissez-la sur le dessin.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(8)
@@ -215,6 +236,7 @@ private struct StencilTile: View {
     let item: StencilItem
 
     var body: some View {
+        let armed = store.activeStencil?.id == item.id
         VStack(spacing: 3) {
             StencilPreview(item: item).frame(width: 54, height: 40)
             Text(item.name)
@@ -224,12 +246,12 @@ private struct StencilTile: View {
                 .frame(maxWidth: .infinity)
         }
         .padding(4)
+        .background(RoundedRectangle(cornerRadius: 5).fill(armed ? Color.accentColor.opacity(0.18) : .clear))
+        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(armed ? Color.accentColor : .clear, lineWidth: 1.5))
         .contentShape(Rectangle())
-        .help(item.name)
-        .onTapGesture {
-            store.endTextEditing()
-            store.insertStencil(item, centeredAt: store.visibleCenter)
-        }
+        .help(armed ? "\(item.name) : tracez-la sur la feuille (Échap pour annuler)"
+                    : "\(item.name) : cliquez puis tracez-la sur la feuille, ou glissez-la sur le dessin")
+        .onTapGesture { store.armStencil(item) }
         .draggable(StencilCatalog.dragPayload(item)) {
             StencilPreview(item: item).frame(width: 64, height: 48)
         }

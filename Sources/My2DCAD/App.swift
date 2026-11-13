@@ -187,7 +187,7 @@ struct My2DCADApp: App {
                 }
                 Menu("Cote") {
                     ForEach(StencilCatalog.libraries.first(where: { $0.id == "dimensions" })?.items ?? []) { item in
-                        Button(item.name) { store.insertStencil(item, centeredAt: store.visibleCenter) }
+                        Button(item.name) { store.armStencil(item) }
                     }
                 }
                 Divider()

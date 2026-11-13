@@ -36,7 +36,8 @@ private enum Interaction {
     case resizingText(id: UUID, frame: TextFrame)
     case reconnecting(id: UUID, start: Bool, current: CGPoint)
     case rotating(original: Shape, startAngle: CGFloat)
-    case drawing(kind: ShapeKind, start: CGPoint, current: CGPoint)
+    /// Tracé d'une forme (outil du ruban, ou forme de bibliothèque `stencil`) : point de départ et pointeur.
+    case drawing(kind: ShapeKind, stencil: StencilItem?, start: CGPoint, current: CGPoint)
     case connecting(from: UUID, port: Int, current: CGPoint)
     case marquee(start: CGPoint, current: CGPoint, additive: Bool)
     case panning(startOffset: CGSize)
@@ -103,7 +104,7 @@ struct CanvasView: View {
                     store.hover = p
                     store.mouseInCanvas = true
                     store.pointer.world = store.toWorld(p)
-                    cursor(for: store.tool).set()
+                    (store.activeStencil != nil ? NSCursor.crosshair : cursor(for: store.tool)).set()
                 case .ended:
                     store.mouseInCanvas = false
                     store.pointer.world = nil
@@ -205,6 +206,13 @@ struct CanvasView: View {
         store.beginTransaction()
         prepareGuideTargets()
 
+        // Forme de bibliothèque choisie dans le volet : elle se trace comme les formes du ruban.
+        if let item = store.activeStencil {
+            let p = snapPoint(w)
+            interaction = .drawing(kind: item.kind, stencil: item, start: p, current: p)
+            return
+        }
+
         switch store.tool {
         case .pan:
             NSCursor.closedHand.set()
@@ -213,7 +221,7 @@ struct CanvasView: View {
         case .rectangle, .ellipse, .diamond, .text, .line, .curve, .dimension:
             if let kind = store.tool.shapeKind {
                 let p = snapPoint(w)
-                interaction = .drawing(kind: kind, start: p, current: p)
+                interaction = .drawing(kind: kind, stencil: nil, start: p, current: p)
             }
 
         case .connector:
@@ -419,16 +427,9 @@ struct CanvasView: View {
             let p = store.snap(w)
             store.doc.guides[gi].position = store.doc.guides[gi].vertical ? p.x : p.y
 
-        case .drawing(let kind, let start, _):
-            var end = snapPoint(w)
-            if (kind == .line || kind == .dimension) && NSEvent.modifierFlags.contains(.shift) {
-                // Maj : trait contraint à un multiple de 45°.
-                let dx = end.x - start.x, dy = end.y - start.y
-                let angle = (atan2(dy, dx) / (.pi / 4)).rounded() * (.pi / 4)
-                let len = hypot(dx, dy)
-                end = CGPoint(x: start.x + cos(angle) * len, y: start.y + sin(angle) * len)
-            }
-            interaction = .drawing(kind: kind, start: start, current: end)
+        case .drawing(let kind, let stencil, let start, _):
+            // Maj (proportions, 45°) et ⌥ (depuis le centre) sont lus à l'affichage et au relâchement.
+            interaction = .drawing(kind: kind, stencil: stencil, start: start, current: snapPoint(w))
 
         case .connecting(let from, let port, _):
             interaction = .connecting(from: from, port: port, current: w)
@@ -456,24 +457,22 @@ struct CanvasView: View {
         guard let current = interaction else { return }
 
         switch current {
-        case .drawing(let kind, let start, let end) where kind.isPath:
-            // Un simple clic (sans glisser) ne crée rien.
-            if start.distance(to: end) * store.zoom >= 5 {
-                store.insertPath(kind: kind, from: start, to: end)
+        case .drawing(let kind, let stencil, let start, let current):
+            // Un simple clic (sans glisser) ne crée rien : la forme se trace par cliquer-glisser.
+            // L'outil ou la forme de bibliothèque reste actif (comme Visio) : Échap ou V pour revenir au pointeur.
+            guard ShapeDrawing.isDrag(from: start, to: current, zoom: store.zoom) else { break }
+            switch drawnGeometry(kind: kind, stencil: stencil, start: start, current: current) {
+            case .segment(let a, let b):
+                guard ShapeDrawing.isDrag(from: a, to: b, zoom: store.zoom) else { break }
+                store.insertPath(kind: kind, from: a, to: b, line: stencil?.line)
+            case .box(let r):
+                if let stencil {
+                    store.insertStencil(stencil, in: r)
+                } else {
+                    store.insertShape(kind: kind, rect: r)
+                    if kind == .text, let id = store.selection.first { store.startTextEditing(id) }
+                }
             }
-            // L'outil reste actif (comme Visio) : Échap ou V pour revenir à la sélection.
-
-        case .drawing(let kind, let start, let end):
-            var r = rectBetween(start, end)
-            if r.width < 8 || r.height < 8 {
-                // Simple clic : forme de taille par défaut centrée sur le point.
-                let w: CGFloat = 120
-                let h: CGFloat = kind == .text ? 30 : 70
-                let o = store.snap(CGPoint(x: start.x - w / 2, y: start.y - h / 2))
-                r = CGRect(x: o.x, y: o.y, width: w, height: h)
-            }
-            store.insertShape(kind: kind, rect: r)
-            if kind == .text, let id = store.selection.first { store.startTextEditing(id) }
 
         case .connecting(let from, let port, let end):
             if let target = store.hitShape(at: end, includePaths: false), target.id != from {
@@ -653,6 +652,35 @@ struct CanvasView: View {
 
     private func shapePath(_ kind: ShapeKind, _ r: CGRect) -> Path {
         kind.paths(in: r).outline
+    }
+
+    /// Forme en cours de tracé : segment (trait, courbe, cote) ou cadre, avec Maj et ⌥ appliqués.
+    private enum DrawnGeometry {
+        case segment(CGPoint, CGPoint)
+        case box(CGRect)
+    }
+
+    private func drawnGeometry(kind: ShapeKind, stencil: StencilItem?, start: CGPoint, current: CGPoint) -> DrawnGeometry {
+        let flags = NSEvent.modifierFlags
+        let shift = flags.contains(.shift), option = flags.contains(.option)
+        if kind.isPath {
+            let s = ShapeDrawing.segment(from: start, to: current, constrainAngle: shift, fromCenter: option)
+            return .segment(s.start, s.end)
+        }
+        let aspect = shift && kind != .text ? ShapeDrawing.aspect(stencil: stencil) : nil
+        return .box(ShapeDrawing.rect(from: start, to: current, kind: kind, aspect: aspect, fromCenter: option))
+    }
+
+    /// Taille de la forme en cours de tracé, affichée près du pointeur dans l'unité de la page.
+    private func drawSizeLabel(_ ctx: inout GraphicsContext, _ label: String, near point: CGPoint) {
+        let text = ctx.resolve(Text(label).font(.caption.monospacedDigit()).foregroundColor(.white))
+        let size = text.measure(in: CGSize(width: 400, height: 40))
+        var origin = CGPoint(x: point.x + 16, y: point.y + 16)
+        origin.x = max(min(origin.x, store.canvasSize.width - size.width - 10), 6)
+        origin.y = max(min(origin.y, store.canvasSize.height - size.height - 8), 4)
+        let box = CGRect(x: origin.x - 5, y: origin.y - 3, width: size.width + 10, height: size.height + 6)
+        ctx.fill(Path(roundedRect: box, cornerRadius: 4), with: .color(.black.opacity(0.72)))
+        ctx.draw(text, at: origin, anchor: .topLeading)
     }
 
     // MARK: - Menu contextuel et curseurs
@@ -859,13 +887,25 @@ struct CanvasView: View {
                 ctx.stroke(ring, with: .color(.green), lineWidth: 2)
             }
 
-        case .drawing(let kind, let start, let end) where kind.isPath:
-            let pts = DocumentStore.initialPathPoints(kind: kind, from: start, to: end)
-            ctx.stroke(painter.screenPath(kind: kind, points: pts), with: .color(accent), style: dashed)
-
-        case .drawing(let kind, let start, let end):
-            let r = store.toScreen(rectBetween(start, end))
-            ctx.stroke(shapePath(kind, r), with: .color(accent), style: dashed)
+        case .drawing(let kind, let stencil, let start, let current):
+            guard ShapeDrawing.isDrag(from: start, to: current, zoom: store.zoom) else { break }
+            let d = store.doc
+            let size: String
+            switch drawnGeometry(kind: kind, stencil: stencil, start: start, current: current) {
+            case .segment(let a, let b):
+                let pts = DocumentStore.initialPathPoints(kind: kind, from: a, to: b)
+                ctx.stroke(painter.screenPath(kind: kind, points: pts), with: .color(accent), style: dashed)
+                let length = Diagram.format(d.measure(a.distance(to: b)), decimals: d.precision)
+                var degrees = -atan2(b.y - a.y, b.x - a.x) * 180 / .pi
+                if degrees < 0 { degrees += 360 }
+                size = "\(length) \(d.unit.symbol) · \(Diagram.format(Double(degrees), decimals: 1))°"
+            case .box(let r):
+                ctx.stroke(shapePath(kind, store.toScreen(r)), with: .color(accent), style: dashed)
+                let w = Diagram.format(d.measure(r.width), decimals: d.precision)
+                let h = Diagram.format(d.measure(r.height), decimals: d.precision)
+                size = "\(w) × \(h) \(d.unit.symbol)"
+            }
+            drawSizeLabel(&ctx, size, near: store.toScreen(current))
 
         case .connecting(let from, let port, let end):
             guard let s = store.doc.shape(from) else { return }

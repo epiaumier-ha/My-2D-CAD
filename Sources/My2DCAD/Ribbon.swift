@@ -556,11 +556,11 @@ struct Ribbon: View {
             column {
                 toolButton(.line)
                 toolButton(.curve)
-                RibbonMenu(title: "Cote", symbol: "ruler", help: "Insérer une cote au centre de la vue") {
+                RibbonMenu(title: "Cote", symbol: "ruler", help: "Choisir une cote, puis la tracer sur la feuille par cliquer-glisser") {
                     Button("Outil Cote (M) : tracer d'un point à l'autre") { store.tool = .dimension }
                     Divider()
                     ForEach(dimensionItems) { item in
-                        Button(item.name) { store.insertStencil(item, centeredAt: store.visibleCenter) }
+                        Button(item.name) { store.armStencil(item) }
                     }
                 }
             }
