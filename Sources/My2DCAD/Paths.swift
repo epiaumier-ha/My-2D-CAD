@@ -59,6 +59,38 @@ extension Shape {
 
     var pathSamplesInWorld: [CGPoint] { pathSamples(kind: kind, points: worldPoints) }
 
+    /// Longueur d'un trait (distance entre ses extrémités) ou d'une courbe (longueur de l'arc),
+    /// en unités du dessin ; nil pour les autres formes.
+    var pathLength: CGFloat? {
+        let p = worldPoints
+        switch kind {
+        case .line where p.count == 2:
+            return p[0].distance(to: p[1])
+        case .curve where p.count == 3:
+            var length: CGFloat = 0
+            var previous = p[0]
+            for i in 1...128 {
+                let q = quadPoint(p[0], p[1], p[2], CGFloat(i) / 128)
+                length += previous.distance(to: q)
+                previous = q
+            }
+            return length
+        default:
+            return nil
+        }
+    }
+
+    /// Donne sa longueur à un trait : le point de départ reste en place, la fin se déplace dans
+    /// la même direction (vers la droite pour un trait de longueur nulle).
+    mutating func setLineLength(_ length: CGFloat) {
+        let p = worldPoints
+        guard kind == .line, p.count == 2, length.isFinite, length > 0 else { return }
+        let d = p[0].distance(to: p[1])
+        let ux = d > 1e-9 ? (p[1].x - p[0].x) / d : 1
+        let uy = d > 1e-9 ? (p[1].y - p[0].y) / d : 0
+        setWorldPoints([p[0], CGPoint(x: p[0].x + ux * length, y: p[0].y + uy * length)])
+    }
+
     /// Milieu du tracé (position du libellé).
     var pathMidpoint: CGPoint {
         let p = worldPoints

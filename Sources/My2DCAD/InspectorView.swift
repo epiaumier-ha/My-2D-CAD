@@ -101,6 +101,14 @@ struct InspectorView: View {
                 if !s.kind.isPath {
                     field("Largeur", value: s.rect.width, minValue: 1) { $0.rect.size.width = $1 }
                     field("Hauteur", value: s.rect.height, minValue: 1) { $0.rect.size.height = $1 }
+                } else if s.kind == .line, let length = s.pathLength {
+                    // Le début du trait reste en place ; la fin suit la direction du trait.
+                    field("Longueur", value: length, minValue: 0.01) { $0.setLineLength($1) }
+                } else if let length = s.pathLength {
+                    LabeledContent("Longueur") {
+                        Text("\(Diagram.format(store.doc.measure(length), decimals: store.doc.precision)) \(store.doc.unit.symbol)")
+                            .monospacedDigit()
+                    }
                 }
             }
             if let target = store.selectionRotationTarget { rotationSection(target, single: s) }

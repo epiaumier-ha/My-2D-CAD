@@ -2146,3 +2146,29 @@ final class RotationPivotTests: XCTestCase {
         XCTAssertThrowsError(try DiagramIO.validate(d))
     }
 }
+
+@MainActor
+final class LineLengthTests: XCTestCase {
+    func testLineLengthKeepsTheStartAndDirection() {
+        var line = Shape(kind: .line, rect: .zero, line: .pathDefault)
+        line.setWorldPoints([CGPoint(x: 10, y: 10), CGPoint(x: 40, y: 50)])   // longueur 50
+        XCTAssertEqual(line.pathLength ?? 0, 50, accuracy: 1e-9)
+        line.setLineLength(100)
+        let p = line.worldPoints
+        XCTAssertEqual(p[0].x, 10, accuracy: 1e-9)
+        XCTAssertEqual(p[0].y, 10, accuracy: 1e-9)
+        XCTAssertEqual(p[1].x, 70, accuracy: 1e-9)
+        XCTAssertEqual(p[1].y, 90, accuracy: 1e-9)
+        line.setLineLength(0)
+        XCTAssertEqual(line.pathLength ?? 0, 100, accuracy: 1e-9, "longueur nulle refusée")
+    }
+
+    func testCurveLengthIsTheArcLength() {
+        var curve = Shape(kind: .curve, rect: .zero, line: .pathDefault)
+        curve.setWorldPoints([CGPoint(x: 0, y: 0), CGPoint(x: 50, y: 0), CGPoint(x: 100, y: 0)])
+        XCTAssertEqual(curve.pathLength ?? 0, 100, accuracy: 1e-6)
+        curve.setWorldPoints([CGPoint(x: 0, y: 0), CGPoint(x: 50, y: 50), CGPoint(x: 100, y: 0)])
+        XCTAssertGreaterThan(curve.pathLength ?? 0, 100)
+        XCTAssertNil(Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 10, height: 10)).pathLength)
+    }
+}
