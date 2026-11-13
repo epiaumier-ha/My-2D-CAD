@@ -279,6 +279,7 @@ struct ExportPageView: View {
     var body: some View {
         Canvas { ctx, _ in
             ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
+            painter.drawBackground(&ctx)
             painter.drawContent(&ctx)
         } symbols: {
             ForEach(painter.labelledShapes) { s in

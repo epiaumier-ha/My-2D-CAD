@@ -550,6 +550,10 @@ struct Ribbon: View {
         }
         RibbonGroup(title: "Illustrations") {
             RibbonLargeButton(title: "Dessin SVG", symbol: "photo", help: "Importer un dessin SVG (⇧⌘I)") { store.importSVG() }
+            RibbonLargeButton(title: "Image d'arrière-plan", symbol: "photo.on.rectangle",
+                              help: "Placer une image sous le dessin de la page (réglages : onglet Création)") {
+                store.chooseBackgroundImage()
+            }
         }
         RibbonGroup(title: "Parties de diagramme") {
             RibbonLargeButton(title: "Connecteur", symbol: Tool.connector.symbol, help: Tool.connector.labelWithShortcut,
@@ -630,6 +634,7 @@ struct Ribbon: View {
             .frame(width: 130)
             .help("Tracé des nouveaux connecteurs")
         }
+        BackgroundImageRibbonGroup()
         RibbonGroup(title: "Calques") {
             RibbonLargeButton(title: "Nouveau calque", symbol: "square.3.layers.3d") { store.addLayer() }
             Text(d.layers.isEmpty ? "Aucun calque" : "\(d.layers.count) calque(s)\nGestion : barre des pages")

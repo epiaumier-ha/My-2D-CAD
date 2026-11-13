@@ -2480,3 +2480,263 @@ final class AppleAssistantTests: XCTestCase {
         XCTAssertTrue(tools.run("update_shapes", ["ids": ["Inconnu"], "changes": ["fill": "#FF0000"]]).isError)
     }
 }
+
+// MARK: - Image d'arrière-plan
+
+@MainActor
+final class BackgroundImageTests: XCTestCase {
+    /// Image PNG de test (w × h pixels, 72 dpi), moitié gauche rouge, moitié droite bleue.
+    private func png(_ w: Int, _ h: Int, dpi: Double = 72) -> Data {
+        let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        ctx.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
+        ctx.fill(CGRect(x: 0, y: 0, width: w / 2, height: h))
+        ctx.setFillColor(red: 0, green: 0, blue: 1, alpha: 1)
+        ctx.fill(CGRect(x: w / 2, y: 0, width: w - w / 2, height: h))
+        let out = NSMutableData()
+        let dest = CGImageDestinationCreateWithData(out, "public.png" as CFString, 1, nil)!
+        CGImageDestinationAddImage(dest, ctx.makeImage()!, [kCGImagePropertyDPIWidth: dpi, kCGImagePropertyDPIHeight: dpi] as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(dest))
+        return out as Data
+    }
+
+    /// Position dans le monde d'un point de l'image d'origine (fractions u, v), rognage, rotation et retournements compris.
+    private func world(_ bg: BackgroundImage, _ u: CGFloat, _ v: CGFloat) -> CGPoint {
+        let f = bg.uncroppedFrame
+        let x = f.minX + (bg.flipHorizontal ? 1 - u : u) * f.width
+        let y = f.minY + (bg.flipVertical ? 1 - v : v) * f.height
+        return bg.toWorld(CGPoint(x: x, y: y))
+    }
+
+    private func assertClose(_ a: CGPoint, _ b: CGPoint, _ tol: CGFloat = 1e-6, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(a.x, b.x, accuracy: tol, file: file, line: line)
+        XCTAssertEqual(a.y, b.y, accuracy: tol, file: file, line: line)
+    }
+
+    private func sample() -> BackgroundImage {
+        var bg = BackgroundImage(data: png(40, 20), naturalSize: CGSize(width: 40, height: 20),
+                                 frame: CGRect(x: 100, y: 50, width: 200, height: 100))
+        bg.rotation = 30
+        bg.flipHorizontal = true
+        return bg
+    }
+
+    func testInsertedImageFitsSheetKeepingProportions() throws {
+        let store = DocumentStore()
+        try store.setBackgroundImage(data: png(400, 100, dpi: 144), name: "plan.png")
+        let bg = try XCTUnwrap(store.doc.backgroundImage)
+        let sheet = store.doc.sheetRect
+        XCTAssertEqual(bg.naturalSize.width, 200, accuracy: 1e-9, "400 px à 144 dpi = 200 pt")
+        XCTAssertEqual(bg.frame.width / bg.frame.height, 4, accuracy: 1e-9)
+        XCTAssertTrue(sheet.contains(bg.frame))
+        XCTAssertEqual(bg.frame.midX, sheet.midX, accuracy: 1e-9)
+        XCTAssertEqual(bg.frame.midY, sheet.midY, accuracy: 1e-9)
+        XCTAssertEqual(bg.name, "plan.png")
+        // Une seule étape d'annulation.
+        store.undo()
+        XCTAssertNil(store.doc.backgroundImage)
+    }
+
+    func testNonImageDataIsRejected() {
+        let store = DocumentStore()
+        XCTAssertThrowsError(try store.setBackgroundImage(data: Data("pas une image".utf8), name: "x.png"))
+        XCTAssertNil(store.doc.backgroundImage)
+        XCTAssertFalse(store.canUndo)
+    }
+
+    func testReplacingKeepsPositionAndSettings() throws {
+        let store = DocumentStore()
+        try store.setBackgroundImage(data: png(200, 100), name: "a.png")
+        store.editBackground(key: "t") { $0.transparency = 0.4; $0.rotation = 90; $0.crop.left = 0.2 }
+        let old = try XCTUnwrap(store.doc.backgroundImage)
+        try store.setBackgroundImage(data: png(100, 100), name: "b.png")
+        let bg = try XCTUnwrap(store.doc.backgroundImage)
+        XCTAssertNotEqual(bg.imageID, old.imageID)
+        assertClose(bg.center, old.center)
+        XCTAssertEqual(bg.frame.width, old.frame.width, accuracy: 1e-9)
+        XCTAssertEqual(bg.frame.height, old.frame.width, accuracy: 1e-9, "image carrée")
+        XCTAssertEqual(bg.transparency, 0.4)
+        XCTAssertEqual(bg.rotation, 90)
+        XCTAssertTrue(bg.crop.isNone, "le rognage ne s'applique pas à la nouvelle image")
+    }
+
+    func testCropKeepsImageInPlace() {
+        let bg = sample()
+        let probes: [(CGFloat, CGFloat)] = [(0.5, 0.5), (0.3, 0.7), (0.9, 0.1)]
+        let before = probes.map { world(bg, $0.0, $0.1) }
+        let cropped = bg.withCrop(CropInsets(left: 0.2, top: 0.1, right: 0.05, bottom: 0.3))
+        XCTAssertEqual(cropped.frame.width, 200 * 0.75, accuracy: 1e-9)
+        XCTAssertEqual(cropped.frame.height, 100 * 0.6, accuracy: 1e-9)
+        for (p, q) in zip(before, probes.map { world(cropped, $0.0, $0.1) }) { assertClose(p, q) }
+        // Retour à l'image entière : cadre d'origine.
+        let restored = cropped.withCrop(.none)
+        assertClose(restored.frame.origin, bg.frame.origin)
+        XCTAssertEqual(restored.frame.size.width, bg.frame.width, accuracy: 1e-9)
+        // Rognage invalide (plus rien de visible) : refusé.
+        XCTAssertEqual(bg.withCrop(CropInsets(left: 0.6, right: 0.6)), bg)
+    }
+
+    func testCropHandleFollowsPointerOnDisplayedSide() {
+        let bg = sample()   // retournée horizontalement : le bord gauche affiché est la droite de l'image
+        let target = bg.toWorld(CGPoint(x: bg.frame.minX + 50, y: bg.frame.midY))
+        let c = bg.cropped(handle: .left, to: target)
+        XCTAssertEqual(c.crop.right, 0.25, accuracy: 1e-9)
+        XCTAssertEqual(c.crop.left, 0, accuracy: 1e-9)
+        assertClose(c.handlePoint(.left), target)
+        assertClose(world(c, 0.5, 0.5), world(bg, 0.5, 0.5))
+        // Le bord ne peut ni sortir de l'image, ni croiser le bord opposé.
+        let outside = bg.cropped(handle: .left, to: bg.toWorld(CGPoint(x: bg.frame.minX - 500, y: bg.frame.midY)))
+        XCTAssertEqual(outside.crop.right, 0, accuracy: 1e-9)
+        let crossed = bg.cropped(handle: .left, to: bg.toWorld(CGPoint(x: bg.frame.maxX + 500, y: bg.frame.midY)))
+        XCTAssertEqual(crossed.crop.right, 1 - CropInsets.minimumVisible, accuracy: 1e-9)
+        XCTAssertTrue(crossed.crop.isValid)
+    }
+
+    func testCornerResizeKeepsProportionsAndOppositeCorner() {
+        let bg = sample()
+        let fixed = bg.handlePoint(.topLeft)
+        let r = bg.resized(handle: .bottomRight, to: bg.toWorld(CGPoint(x: bg.frame.maxX + 100, y: bg.frame.maxY)), proportional: true)
+        XCTAssertEqual(r.frame.width / r.frame.height, 2, accuracy: 1e-9)
+        XCTAssertEqual(r.frame.width, 300, accuracy: 1e-9)
+        assertClose(r.handlePoint(.topLeft), fixed)
+        // Côté : étirement libre, côté opposé fixe.
+        let s = bg.resized(handle: .top, to: bg.toWorld(CGPoint(x: bg.frame.midX, y: bg.frame.minY - 40)), proportional: true)
+        XCTAssertEqual(s.frame.width, 200, accuracy: 1e-9)
+        XCTAssertEqual(s.frame.height, 140, accuracy: 1e-9)
+        assertClose(s.handlePoint(.bottom), bg.handlePoint(.bottom))
+    }
+
+    func testCalibrationScalesAroundFirstPoint() throws {
+        let store = DocumentStore()
+        try store.setBackgroundImage(data: png(200, 100), name: "plan.png")
+        store.updatePageSettings { $0.unit = .mm; $0.scale = 100 }
+        let bg = try XCTUnwrap(store.doc.backgroundImage)
+        let a = world(bg, 0.1, 0.5), b = world(bg, 0.6, 0.5)
+        // Les deux points mesurent 5 m en réalité (5 000 mm à l'échelle 1:100).
+        XCTAssertTrue(store.calibrateBackground(from: a, to: b, measure: 5000))
+        let c = try XCTUnwrap(store.doc.backgroundImage)
+        assertClose(world(c, 0.1, 0.5), a, 1e-6)
+        XCTAssertEqual(store.doc.measure(world(c, 0.1, 0.5).distance(to: world(c, 0.6, 0.5))), 5000, accuracy: 1e-6)
+        XCTAssertFalse(store.calibrateBackground(from: a, to: a, measure: 10), "points confondus")
+        XCTAssertFalse(store.calibrateBackground(from: a, to: b, measure: 0))
+        store.undo()
+        XCTAssertEqual(store.doc.backgroundImage, bg)
+    }
+
+    func testLockedImageRejectsGeometryChanges() throws {
+        let store = DocumentStore()
+        try store.setBackgroundImage(data: png(100, 50), name: "")
+        store.editBackground(key: "locked", allowLocked: true) { $0.locked = true }
+        let locked = try XCTUnwrap(store.doc.backgroundImage)
+        store.nudgeBackground(dx: 10, dy: 0)
+        store.rotateBackground(by: 90)
+        store.toggleBackgroundMode(.crop)
+        XCTAssertEqual(store.doc.backgroundImage, locked)
+        XCTAssertNil(store.backgroundMode)
+        // Les réglages d'affichage restent accessibles.
+        store.editBackground(key: "transparency", allowLocked: true) { $0.transparency = 0.5 }
+        XCTAssertEqual(store.doc.backgroundImage?.transparency, 0.5)
+    }
+
+    func testEditModeEndsWithSelectionToolOrPageChange() throws {
+        let store = DocumentStore()
+        try store.setBackgroundImage(data: png(100, 50), name: "")
+        store.toggleBackgroundMode(.adjust)
+        XCTAssertEqual(store.backgroundMode, .adjust)
+        store.tool = .rectangle
+        XCTAssertNil(store.backgroundMode)
+        store.toggleBackgroundMode(.crop)
+        store.insertShape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 10, height: 10))
+        XCTAssertNil(store.backgroundMode, "sélectionner une forme termine le rognage")
+        store.toggleBackgroundMode(.calibrate)
+        store.addPage()
+        XCTAssertNil(store.backgroundMode)
+    }
+
+    func testSliderEditsAreOneUndoStep() throws {
+        let store = DocumentStore()
+        try store.setBackgroundImage(data: png(100, 50), name: "")
+        for v in stride(from: 0.1, through: 0.6, by: 0.1) {
+            store.editBackground(key: "transparency", allowLocked: true) { $0.transparency = v }
+        }
+        store.undo()
+        XCTAssertEqual(store.doc.backgroundImage?.transparency, 0)
+    }
+
+    func testSaveAndLoadRoundTrip() throws {
+        let store = DocumentStore()
+        try store.setBackgroundImage(data: png(64, 32), name: "plan.png")
+        store.editBackground(key: "x") { b in
+            b = b.withCrop(CropInsets(left: 0.25, top: 0, right: 0, bottom: 0.5))
+            b.rotation = 15; b.flipVertical = true; b.transparency = 0.3; b.printable = false
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("fond-\(UUID().uuidString).cad2d")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try DiagramIO.save(store.document, to: url)
+        let loaded = try DiagramIO.load(from: url)
+        let a = try XCTUnwrap(store.doc.backgroundImage), b = try XCTUnwrap(loaded.pages[0].backgroundImage)
+        XCTAssertEqual(a.data, b.data)
+        XCTAssertNotEqual(a.imageID, b.imageID, "identifiant renouvelé au chargement")
+        var same = b; same.imageID = a.imageID
+        XCTAssertEqual(same, a)
+        // Fichier sans image (ancien format) : pas d'arrière-plan.
+        var old = store.document; old.pages[0].backgroundImage = nil
+        try DiagramIO.save(old, to: url)
+        XCTAssertNil(try DiagramIO.load(from: url).pages[0].backgroundImage)
+    }
+
+    func testValidationRejectsCorruptBackground() throws {
+        var d = Diagram()
+        d.backgroundImage = BackgroundImage(data: png(10, 10), naturalSize: CGSize(width: 10, height: 10),
+                                            frame: CGRect(x: 0, y: 0, width: 10, height: 10))
+        XCTAssertNoThrow(try DiagramIO.validate(d))
+        var bad = d; bad.backgroundImage?.data = Data("<svg/>".utf8)
+        XCTAssertThrowsError(try DiagramIO.validate(bad))
+        bad = d; bad.backgroundImage?.frame.size.width = .nan
+        XCTAssertThrowsError(try DiagramIO.validate(bad))
+        bad = d; bad.backgroundImage?.frame.size.height = 0
+        XCTAssertThrowsError(try DiagramIO.validate(bad))
+        bad = d; bad.backgroundImage?.crop = CropInsets(left: 0.5, top: 0, right: 0.5, bottom: 0)
+        XCTAssertThrowsError(try DiagramIO.validate(bad))
+        bad = d; bad.backgroundImage?.transparency = 1.5
+        XCTAssertThrowsError(try DiagramIO.validate(bad))
+        bad = d; bad.backgroundImage?.rotation = .infinity
+        XCTAssertThrowsError(try DiagramIO.validate(bad))
+        // Image TIFF (format non incorporé) : refusée dans un fichier.
+        let tiff = NSBitmapImageRep(data: png(4, 4))!.representation(using: .tiff, properties: [:])!
+        bad = d; bad.backgroundImage?.data = tiff
+        XCTAssertThrowsError(try DiagramIO.validate(bad))
+        // …mais convertie à l'insertion.
+        let store = DocumentStore()
+        XCTAssertNoThrow(try store.setBackgroundImage(data: tiff, name: "scan.tiff"))
+        XCTAssertTrue(BackgroundImageIO.isAcceptable(try XCTUnwrap(store.doc.backgroundImage).data))
+    }
+
+    func testPageScaleChangeRescalesImage() throws {
+        let store = DocumentStore()
+        try store.setBackgroundImage(data: png(100, 50), name: "")
+        let before = try XCTUnwrap(store.doc.backgroundImage).frame
+        store.updatePageSettings { $0.scale = 2 }
+        let after = try XCTUnwrap(store.doc.backgroundImage).frame
+        XCTAssertEqual(after.width, before.width / 2, accuracy: 1e-9)
+        XCTAssertEqual(after.minX, before.minX / 2, accuracy: 1e-9)
+    }
+
+    func testExportIncludesPrintableImageOnly() throws {
+        let store = DocumentStore()
+        try store.setBackgroundImage(data: png(20, 10), name: "")
+        store.editBackground(key: "c") { $0 = $0.withCrop(CropInsets(left: 0.5)) }
+        let bg = try XCTUnwrap(store.doc.backgroundImage)
+        XCTAssertEqual(DiagramExporter.contentBounds(store.doc), bg.bounds)
+        let svg = SVGExporter.svg(for: store.doc)
+        XCTAssertTrue(svg.contains("data:image/png;base64,"))
+        XCTAssertTrue(svg.contains("viewBox=\"10 0 10 10\""), "rognage : moitié droite de l'image")
+        XCTAssertNotNil(try? XMLDocument(xmlString: svg), "SVG bien formé")
+        let cropped = try XCTUnwrap(BackgroundImageCache.shared.croppedImage(bg))
+        XCTAssertEqual(cropped.width, 10)
+        XCTAssertNoThrow(try DiagramExporter.pngData(store.doc))
+        store.editBackground(key: "p", allowLocked: true) { $0.printable = false }
+        XCTAssertNil(DiagramExporter.contentBounds(store.doc))
+        XCTAssertFalse(SVGExporter.svg(for: store.doc).contains("base64"))
+    }
+}

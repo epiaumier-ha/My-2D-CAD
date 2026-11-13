@@ -112,6 +112,8 @@ final class DocumentStore: ObservableObject {
             updateSelectionOrder()
             // Le point de rotation d'une sélection multiple ne vaut que pour cette sélection.
             if selectionPin != nil && selectionPin?.ids != selection { selectionPin = nil }
+            // Sélectionner une forme termine l'édition de l'image d'arrière-plan.
+            if !selection.isEmpty && backgroundMode != nil { backgroundMode = nil }
         }
     }
     /// Point de rotation choisi pour la sélection multiple en cours (hors groupe).
@@ -126,10 +128,17 @@ final class DocumentStore: ObservableObject {
             if tool.isDrawingTool { lastDrawingTool = tool }
             // Choisir un outil remplace la forme de bibliothèque en attente de tracé.
             activeStencil = nil
+            if backgroundMode != nil { backgroundMode = nil }
         }
     }
     /// Forme de bibliothèque choisie dans le volet Formes, à tracer sur la feuille par cliquer-glisser.
     @Published var activeStencil: StencilItem?
+    /// Édition de l'image d'arrière-plan sur le canevas (ajuster, rogner, étalonner) ; nil : dessin normal.
+    @Published var backgroundMode: BackgroundEditMode? {
+        didSet { if backgroundMode != .calibrate { calibrationPoints = [] } }
+    }
+    /// Étalonnage : premier point déjà cliqué (coordonnées monde).
+    @Published var calibrationPoints: [CGPoint] = []
     /// Dernier outil de dessin utilisé (affiché sur le bouton « Dessin »).
     @Published private(set) var lastDrawingTool: Tool = .rectangle
 
@@ -303,6 +312,7 @@ final class DocumentStore: ObservableObject {
         isDirty = true
         coalesceKey = nil
         pruneSelection()
+        if doc.backgroundImage == nil || doc.backgroundImage?.locked == true { backgroundMode = nil }
     }
 
     /// Retire de la sélection ce qui n'existe plus ou n'est plus sélectionnable (calque masqué ou verrouillé).
@@ -323,6 +333,7 @@ final class DocumentStore: ObservableObject {
         guard document.pages.indices.contains(index), index != currentPage else { return }
         if editingShapeID != nil { commitTextEditing() }
         selection = []
+        backgroundMode = nil
         currentPage = index
     }
 
@@ -381,6 +392,20 @@ final class DocumentStore: ObservableObject {
             coalesceKey = k
         }
         doc.shapes[i] = s
+    }
+
+    /// Modification de la page depuis le volet ou le ruban (image d'arrière-plan…) ; les réglages
+    /// successifs d'un même champ (curseur, saisie) sont regroupés en une seule entrée d'historique.
+    func editPage(key: String, _ change: (inout Diagram) -> Void) {
+        var updated = doc
+        change(&updated)
+        guard updated != doc else { return }
+        let k = "page-\(key)-\(doc.id)"
+        if coalesceKey != k {
+            push(snapshot())
+            coalesceKey = k
+        }
+        doc = updated
     }
 
     /// Modification groupée de la sélection depuis l'inspecteur : les réglages successifs d'un même
@@ -577,6 +602,7 @@ final class DocumentStore: ObservableObject {
         fileURL = url
         isDirty = false
         tool = .select
+        backgroundMode = nil
         if url == nil { fitPage() }
     }
 
@@ -695,7 +721,9 @@ final class DocumentStore: ObservableObject {
                 guard !selection.isEmpty else { return e }
                 deleteSelection(); return nil
             case 53:
-                // Échap : quitte l'outil ou la forme de bibliothèque en cours, puis désélectionne.
+                // Échap : quitte l'édition de l'image d'arrière-plan, l'outil ou la forme de bibliothèque
+                // en cours, puis désélectionne.
+                if backgroundMode != nil { backgroundMode = nil; return nil }
                 if tool != .select || activeStencil != nil { tool = .select } else { selection = [] }
                 return nil
             case 36, 76, 120:
@@ -703,6 +731,11 @@ final class DocumentStore: ObservableObject {
                 guard selection.count == 1, let id = selection.first, doc.shape(id) != nil else { return e }
                 startTextEditing(id); return nil
             case 123, 124, 125, 126:
+                if selection.isEmpty, backgroundMode == .adjust {
+                    let dx: CGFloat = e.keyCode == 123 ? -step : (e.keyCode == 124 ? step : 0)
+                    let dy: CGFloat = e.keyCode == 126 ? -step : (e.keyCode == 125 ? step : 0)
+                    nudgeBackground(dx: dx, dy: dy); return nil
+                }
                 guard !selection.isEmpty else { return e }
                 let dx: CGFloat = e.keyCode == 123 ? -step : (e.keyCode == 124 ? step : 0)
                 let dy: CGFloat = e.keyCode == 126 ? -step : (e.keyCode == 125 ? step : 0)

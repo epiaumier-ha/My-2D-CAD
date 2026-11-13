@@ -26,7 +26,8 @@ enum DiagramExporter {
     /// Zone utile d'une page : formes et connecteurs exportés.
     static func contentBounds(_ page: Diagram) -> CGRect? {
         let painter = DiagramPainter(diagram: page, zoom: 1, offset: .zero, forExport: true)
-        var bounds: CGRect?
+        // Image d'arrière-plan incluse à l'impression.
+        var bounds: CGRect? = painter.drawnBackground?.bounds
         for s in page.shapes where painter.isDrawn(s) {
             var b = s.bounds
             // Bloc de texte (éventuellement déplacé hors de la forme).

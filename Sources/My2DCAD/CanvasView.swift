@@ -47,6 +47,11 @@ private enum Interaction {
     case connecting(from: UUID, port: Int, current: CGPoint)
     case marquee(start: CGPoint, current: CGPoint, additive: Bool)
     case panning(startOffset: CGSize)
+    /// Image d'arrière-plan : déplacement, redimensionnement, rognage (image de départ), étalonnage (point courant).
+    case movingBackground(original: BackgroundImage, start: CGPoint)
+    case resizingBackground(original: BackgroundImage, handle: BackgroundHandle)
+    case croppingBackground(original: BackgroundImage, handle: BackgroundHandle)
+    case calibrating(start: CGPoint, current: CGPoint)
 }
 
 private func rectBetween(_ a: CGPoint, _ b: CGPoint) -> CGRect {
@@ -235,6 +240,8 @@ struct CanvasView: View {
         let w = store.toWorld(screen)
         store.beginTransaction()
         prepareGuideTargets()
+
+        if beginBackgroundEdit(at: screen, world: w) { return }
 
         // Forme de bibliothèque choisie dans le volet : elle se trace comme les formes du ruban.
         if let item = store.activeStencil {
@@ -488,6 +495,150 @@ struct CanvasView: View {
         case .panning(let startOffset):
             store.offset = CGSize(width: startOffset.width + v.translation.width,
                                   height: startOffset.height + v.translation.height)
+
+        case .movingBackground(let original, let start):
+            var dx = w.x - start.x, dy = w.y - start.y
+            // Maj : déplacement horizontal ou vertical uniquement ; sinon le coin haut-gauche suit la grille.
+            if NSEvent.modifierFlags.contains(.shift) { if abs(dx) > abs(dy) { dy = 0 } else { dx = 0 } }
+            else if original.rotation == 0 {
+                let o = store.snap(CGPoint(x: original.frame.minX + dx, y: original.frame.minY + dy))
+                dx = o.x - original.frame.minX; dy = o.y - original.frame.minY
+            }
+            store.doc.backgroundImage?.frame = original.frame.offsetBy(dx: dx, dy: dy)
+
+        case .resizingBackground(let original, let handle):
+            // Poignées d'angle : proportions conservées (Maj inverse le réglage « Conserver les proportions »).
+            let proportional = original.keepAspectRatio != NSEvent.modifierFlags.contains(.shift)
+            let pointer = original.rotation == 0 ? store.snap(w) : w
+            store.doc.backgroundImage = original.resized(handle: handle, to: pointer, proportional: proportional)
+
+        case .croppingBackground(let original, let handle):
+            store.doc.backgroundImage = original.cropped(handle: handle, to: w)
+
+        case .calibrating(let start, _):
+            interaction = .calibrating(start: start, current: calibrationPoint(w, from: store.calibrationPoints.first ?? start))
+        }
+    }
+
+    // MARK: - Image d'arrière-plan
+
+    /// Clic en mode d'édition de l'image : poignées, déplacement ou point d'étalonnage. Un clic hors de
+    /// l'image quitte le mode (comme le rognage de Visio) et poursuit le geste normalement.
+    private func beginBackgroundEdit(at screen: CGPoint, world w: CGPoint) -> Bool {
+        guard let mode = store.backgroundMode else { return false }
+        guard let bg = store.doc.backgroundImage, !bg.locked else { store.backgroundMode = nil; return false }
+        switch mode {
+        case .calibrate:
+            interaction = .calibrating(start: w, current: w)
+            return true
+        case .adjust, .crop:
+            if let h = BackgroundHandle.allCases.first(where: { store.toScreen(bg.handlePoint($0)).distance(to: screen) <= 8 }) {
+                interaction = mode == .crop ? .croppingBackground(original: bg, handle: h)
+                    : .resizingBackground(original: bg, handle: h)
+                return true
+            }
+            if bg.contains(w) {
+                NSCursor.closedHand.set()
+                interaction = .movingBackground(original: bg, start: w)
+                return true
+            }
+            store.backgroundMode = nil
+            return false
+        }
+    }
+
+    /// Point d'étalonnage : Maj contraint la mesure à l'horizontale ou à la verticale du premier point.
+    private func calibrationPoint(_ w: CGPoint, from a: CGPoint) -> CGPoint {
+        guard NSEvent.modifierFlags.contains(.shift) else { return w }
+        return abs(w.x - a.x) >= abs(w.y - a.y) ? CGPoint(x: w.x, y: a.y) : CGPoint(x: a.x, y: w.y)
+    }
+
+    /// Fin d'un geste d'étalonnage : glisser d'un point à l'autre, ou deux clics successifs.
+    /// La distance réelle est demandée après la fin du geste (hors de la transaction du geste).
+    private func finishCalibration(start: CGPoint, end: CGPoint) {
+        let points: [CGPoint]
+        if ShapeDrawing.isDrag(from: start, to: end, zoom: store.zoom) && store.calibrationPoints.isEmpty {
+            points = [start, end]
+        } else {
+            points = [end]
+        }
+        Task { @MainActor [store] in
+            for p in points { store.addCalibrationPoint(p) }
+        }
+    }
+
+    /// Cadre, poignées et repères de l'image en cours d'édition.
+    private func drawBackgroundEditing(_ ctx: inout GraphicsContext) {
+        guard let mode = store.backgroundMode, let bg = store.doc.backgroundImage else { return }
+        let outline: (CGRect) -> Path = { r in
+            var p = Path()
+            p.addLines([CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX, y: r.maxY),
+                        CGPoint(x: r.minX, y: r.maxY)].map { store.toScreen(bg.toWorld($0)) })
+            p.closeSubpath()
+            return p
+        }
+        switch mode {
+        case .adjust:
+            ctx.stroke(outline(bg.frame), with: .color(accent), style: StrokeStyle(lineWidth: 1.5, dash: [6, 3]))
+            for h in BackgroundHandle.allCases {
+                let p = store.toScreen(bg.handlePoint(h))
+                let box = CGRect(x: p.x - 4.5, y: p.y - 4.5, width: 9, height: 9)
+                ctx.fill(Path(box), with: .color(.white))
+                ctx.stroke(Path(box), with: .color(accent), lineWidth: 1.5)
+            }
+            if case .resizingBackground = interaction {
+                let d = store.doc
+                let label = "\(Diagram.format(d.measure(bg.frame.width), decimals: d.precision)) × "
+                    + "\(Diagram.format(d.measure(bg.frame.height), decimals: d.precision)) \(d.unit.symbol)"
+                drawSizeLabel(&ctx, label, near: store.toScreen(bg.handlePoint(.bottomRight)))
+            }
+        case .crop:
+            // Image entière (cadre gris) et partie conservée, poignées de rognage noires en L et en barre.
+            ctx.stroke(outline(bg.uncroppedFrame), with: .color(.gray), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+            ctx.stroke(outline(bg.frame), with: .color(.black), lineWidth: 1)
+            let len: CGFloat = 12
+            var marks = Path()
+            for h in BackgroundHandle.allCases {
+                let p = store.toScreen(bg.handlePoint(h))
+                // Directions locales du cadre vers l'intérieur, pivotées à l'écran.
+                let ux = CGVector(dx: cos(bg.angle), dy: sin(bg.angle)), uy = CGVector(dx: -sin(bg.angle), dy: cos(bg.angle))
+                let sx: CGFloat = h.unit.x == 0 ? 1 : -1, sy: CGFloat = h.unit.y == 0 ? 1 : -1
+                if h.isCorner {
+                    marks.move(to: CGPoint(x: p.x + ux.dx * sx * len, y: p.y + ux.dy * sx * len))
+                    marks.addLine(to: p)
+                    marks.addLine(to: CGPoint(x: p.x + uy.dx * sy * len, y: p.y + uy.dy * sy * len))
+                } else {
+                    let along = h.unit.x == 0.5 ? ux : uy
+                    marks.move(to: CGPoint(x: p.x - along.dx * len / 2, y: p.y - along.dy * len / 2))
+                    marks.addLine(to: CGPoint(x: p.x + along.dx * len / 2, y: p.y + along.dy * len / 2))
+                }
+            }
+            ctx.stroke(marks, with: .color(.white), style: StrokeStyle(lineWidth: 6, lineCap: .square))
+            ctx.stroke(marks, with: .color(.black), style: StrokeStyle(lineWidth: 3.5, lineCap: .square))
+        case .calibrate:
+            ctx.stroke(outline(bg.frame), with: .color(.orange), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            var a: CGPoint? = store.calibrationPoints.first
+            var b: CGPoint?
+            if case .calibrating(let start, let current) = interaction {
+                if a == nil, ShapeDrawing.isDrag(from: start, to: current, zoom: store.zoom) { a = start }
+                if a != nil { b = current }
+            }
+            if let a, let b {
+                var line = Path()
+                line.move(to: store.toScreen(a)); line.addLine(to: store.toScreen(b))
+                ctx.stroke(line, with: .color(.orange), lineWidth: 2)
+                let d = store.doc
+                drawSizeLabel(&ctx, "\(Diagram.format(d.measure(a.distance(to: b)), decimals: max(d.precision, 2))) \(d.unit.symbol)",
+                              near: store.toScreen(b))
+            }
+            for p in [a, b].compactMap({ $0 }).map({ store.toScreen($0) }) {
+                var cross = Path()
+                cross.move(to: CGPoint(x: p.x - 7, y: p.y)); cross.addLine(to: CGPoint(x: p.x + 7, y: p.y))
+                cross.move(to: CGPoint(x: p.x, y: p.y - 7)); cross.addLine(to: CGPoint(x: p.x, y: p.y + 7))
+                ctx.stroke(cross, with: .color(.white), lineWidth: 3)
+                ctx.stroke(cross, with: .color(.orange), lineWidth: 1.5)
+                ctx.stroke(Path(ellipseIn: CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)), with: .color(.orange), lineWidth: 1.5)
+            }
         }
     }
 
@@ -553,6 +704,9 @@ struct CanvasView: View {
         case .marquee(let start, let end, let additive):
             store.selectInRect(rectBetween(start, end), additive: additive)
 
+        case .calibrating(let start, let end):
+            finishCalibration(start: start, end: end)
+
         default:
             break
         }
@@ -569,6 +723,11 @@ struct CanvasView: View {
         var shadowed = ctx
         shadowed.addFilter(.shadow(color: .black.opacity(0.25), radius: 4, x: 1, y: 2))
         shadowed.fill(Path(sheet), with: .color(.white))
+        // Image d'arrière-plan sous la grille et le dessin ; en rognage, l'image entière en transparence.
+        if store.backgroundMode == .crop, let bg = store.doc.backgroundImage {
+            painter.drawBackgroundImage(bg, uncropped: true, opacity: 0.3 * (1 - bg.transparency), in: &ctx)
+        }
+        painter.drawBackground(&ctx)
         var grid = ctx
         grid.clip(to: Path(sheet))
         drawGrid(&grid, size: size)
@@ -587,6 +746,7 @@ struct CanvasView: View {
         }
 
         drawSelection(&ctx, painter: painter)
+        drawBackgroundEditing(&ctx)
         drawRulerGuides(&ctx, size: size)
         drawGuides(&ctx)
         drawInteractionPreview(&ctx)
@@ -752,6 +912,8 @@ struct CanvasView: View {
             Divider()
             Button("Ajuster la feuille au dessin") { store.fitSheetToDrawing() }
                 .disabled(store.doc.shapes.isEmpty)
+            Divider()
+            BackgroundImageMenuItems()
         } else {
             Button("Couper") { store.cutSelection() }
             Button("Copier") { store.copySelection() }
@@ -807,6 +969,13 @@ struct CanvasView: View {
 
     /// Curseur au survol : croix pour tracer une forme de bibliothèque ou déplacer le point de rotation.
     private func hoverCursor(at p: CGPoint) -> NSCursor {
+        if let mode = store.backgroundMode, let bg = store.doc.backgroundImage {
+            if mode == .calibrate { return .crosshair }
+            if BackgroundHandle.allCases.contains(where: { store.toScreen(bg.handlePoint($0)).distance(to: p) <= 8 }) {
+                return .crosshair
+            }
+            return bg.contains(store.toWorld(p)) ? .openHand : .arrow
+        }
         if store.activeStencil != nil { return .crosshair }
         if store.tool == .select, let target = store.selectionRotationTarget,
            store.toScreen(target.pivot).distance(to: p) <= 6 {

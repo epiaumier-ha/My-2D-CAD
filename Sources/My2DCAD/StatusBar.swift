@@ -46,6 +46,18 @@ struct StatusBar: View {
 
     /// Aide contextuelle selon l'outil (raccourcis utiles).
     private var hint: String {
+        switch store.backgroundMode {
+        case .adjust:
+            return "Image d'arrière-plan : glisser pour déplacer · poignées : taille (Maj : proportions libres) · flèches : décaler · Échap : terminer"
+        case .crop:
+            return "Rogner l'image : glisser les poignées noires · glisser l'image pour la déplacer · Échap : terminer"
+        case .calibrate:
+            return store.calibrationPoints.isEmpty
+                ? "Étalonner : glisser d'un point connu à un autre (ou deux clics) · Maj : horizontale / verticale · Échap : annuler"
+                : "Étalonner : cliquer le second point · Maj : horizontale / verticale · Échap : annuler"
+        case nil:
+            break
+        }
         if let item = store.activeStencil {
             return "\(item.name) : glisser pour tracer · Maj : proportions · ⌥ : depuis le centre · Échap : annuler"
         }

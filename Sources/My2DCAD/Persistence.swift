@@ -16,7 +16,8 @@ enum DiagramIOError: LocalizedError {
 
 /// Lecture/écriture JSON avec validation stricte : un fichier est une donnée non fiable.
 enum DiagramIO {
-    static let maxFileSize = 50 * 1024 * 1024
+    /// Taille maximale d'un fichier (les images d'arrière-plan y sont incorporées, en base 64).
+    static let maxFileSize = 200 * 1024 * 1024
     static let maxShapes = 50_000
     static let maxConnectors = 100_000
     static let maxCoordinate: CGFloat = 10_000_000
@@ -47,7 +48,11 @@ enum DiagramIO {
         try validate(document)
         // Cotes collées recalées sur leurs formes (fichier modifié ailleurs, cible disparue).
         var resolved = document
-        for i in resolved.pages.indices { resolved.pages[i].resolveGlue(previous: nil) }
+        for i in resolved.pages.indices {
+            resolved.pages[i].resolveGlue(previous: nil)
+            // Identifiant d'image propre à cette session : le cache de décodage ne peut pas confondre deux images.
+            resolved.pages[i].backgroundImage?.imageID = UUID()
+        }
         return resolved
     }
 
@@ -75,6 +80,10 @@ enum DiagramIO {
         }
         let total = document.pages.reduce(0) { $0 + $1.shapes.count }
         guard total <= maxShapes else { throw DiagramIOError.invalid("trop d'éléments") }
+        let imageBytes = document.pages.reduce(0) { $0 + ($1.backgroundImage?.data.count ?? 0) }
+        guard imageBytes <= BackgroundImageIO.maxTotalBytes else {
+            throw DiagramIOError.invalid("images d'arrière-plan trop volumineuses")
+        }
         for page in document.pages { try validate(page) }
     }
 
@@ -96,6 +105,7 @@ enum DiagramIO {
               d.guides.allSatisfy({ $0.position.isFinite && abs($0.position) <= maxCoordinate }) else {
             throw DiagramIOError.invalid("repères invalides")
         }
+        if let bg = d.backgroundImage { try validate(bg) }
         let layerIDs = Set(d.layers.map(\.id))
         guard layerIDs.count == d.layers.count else { throw DiagramIOError.invalid("identifiants de calques dupliqués") }
         guard d.layers.allSatisfy({ $0.name.count <= maxNameLength }) else {
@@ -168,6 +178,23 @@ enum DiagramIO {
             guard (0..<Port.count).contains(c.fromPort), (0..<Port.count).contains(c.toPort) else {
                 throw DiagramIOError.invalid("point de connexion invalide")
             }
+        }
+    }
+
+    /// Image d'arrière-plan : octets PNG ou JPEG lisibles et de taille raisonnable, géométrie et réglages bornés.
+    static func validate(_ bg: BackgroundImage) throws {
+        let f = bg.frame
+        let values = [f.origin.x, f.origin.y, f.width, f.height, bg.naturalSize.width, bg.naturalSize.height]
+        guard values.allSatisfy({ $0.isFinite && abs($0) <= maxCoordinate }),
+              f.width > 0, f.height > 0, bg.naturalSize.width > 0, bg.naturalSize.height > 0 else {
+            throw DiagramIOError.invalid("cadre de l'image d'arrière-plan invalide")
+        }
+        guard bg.crop.isValid, bg.rotation.isFinite, abs(bg.rotation) <= 360,
+              bg.transparency.isFinite, (0...1).contains(bg.transparency), bg.name.count <= maxNameLength else {
+            throw DiagramIOError.invalid("réglages de l'image d'arrière-plan invalides")
+        }
+        guard BackgroundImageIO.isAcceptable(bg.data) else {
+            throw DiagramIOError.invalid("image d'arrière-plan illisible ou trop grande")
         }
     }
 }

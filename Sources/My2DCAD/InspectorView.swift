@@ -130,6 +130,9 @@ struct InspectorView: View {
                 LabeledContent("Connecteurs", value: "\(store.doc.connectors.count)")
             }
             pageSection
+            pane("Image d'arrière-plan") {
+                BackgroundImageInspector()
+            }
             pane("Raccourcis") {
                 Text(Tool.allCases.map { "\(String($0.shortcut).uppercased()) \($0.label.lowercased())" }.joined(separator: " · ")
                      + "\nÉchap : revenir au pointeur · Espace maintenu : déplacer la vue")

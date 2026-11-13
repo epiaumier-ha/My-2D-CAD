@@ -20,6 +20,7 @@ enum SVGExporter {
         <g transform="translate(\(n(m - content.minX)) \(n(m - content.minY)))" font-family="Helvetica, Arial, sans-serif">
 
         """
+        if let bg = painter.drawnBackground { out += backgroundElement(bg) }
         for c in page.connectors where painter.isDrawn(c) {
             guard let pts = page.connectorPoints(c, context: painter.routing), pts.count > 1 else { continue }
             var path = Path()
@@ -39,6 +40,23 @@ enum SVGExporter {
         }
         out += "</g>\n</svg>\n"
         return out
+    }
+
+    /// Image d'arrière-plan incorporée (data URI) : rotation et retournements par transformation,
+    /// rognage par la zone affichée d'un <svg> imbriqué, transparence par l'opacité.
+    static func backgroundElement(_ bg: BackgroundImage) -> String {
+        guard let img = BackgroundImageCache.shared.image(bg) else { return "" }
+        let pw = CGFloat(img.width), ph = CGFloat(img.height), c = bg.crop
+        let w = bg.frame.width, h = bg.frame.height
+        var t = "translate(\(n(bg.frame.midX)) \(n(bg.frame.midY)))"
+        if bg.rotation != 0 { t += " rotate(\(n(bg.rotation)))" }
+        if bg.flipHorizontal || bg.flipVertical { t += " scale(\(bg.flipHorizontal ? -1 : 1) \(bg.flipVertical ? -1 : 1))" }
+        let opacity = bg.transparency > 0 ? " opacity=\"\(n(1 - bg.transparency))\"" : ""
+        let view = "\(n(CGFloat(c.left) * pw)) \(n(CGFloat(c.top) * ph)) \(n(CGFloat(1 - c.left - c.right) * pw)) \(n(CGFloat(1 - c.top - c.bottom) * ph))"
+        return """
+        <g transform="\(t)"\(opacity)><svg x="\(n(-w / 2))" y="\(n(-h / 2))" width="\(n(w))" height="\(n(h))" viewBox="\(view)" preserveAspectRatio="none"><image width="\(n(pw))" height="\(n(ph))" href="data:\(BackgroundImageIO.mimeType(bg.data));base64,\(bg.data.base64EncodedString())"/></svg></g>
+
+        """
     }
 
     private static func shapeElement(_ s: Shape, painter: DiagramPainter) -> String {

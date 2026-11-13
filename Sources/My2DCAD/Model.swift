@@ -193,10 +193,12 @@ struct Diagram: Codable, Equatable {
     var pageSetup = PageSetup()
     /// Grille : affichage, espacement variable ou fixe, subdivisions.
     var grid = GridSettings()
+    /// Image d'arrière-plan de la page (sous la grille et les formes), incorporée au fichier.
+    var backgroundImage: BackgroundImage?
 
     enum CodingKeys: String, CodingKey {
         case version, shapes, connectors, id, name, layers, activeLayerID
-        case unit, scale, precision, defaultRouting, guides, pageSetup, grid
+        case unit, scale, precision, defaultRouting, guides, pageSetup, grid, backgroundImage
     }
 
     func shape(_ id: UUID) -> Shape? { shapes.first { $0.id == id } }
@@ -257,6 +259,7 @@ extension Diagram {
         guides = try c.decodeIfPresent([GuideLine].self, forKey: .guides) ?? []
         pageSetup = try c.decodeIfPresent(PageSetup.self, forKey: .pageSetup) ?? PageSetup()
         grid = try c.decodeIfPresent(GridSettings.self, forKey: .grid) ?? GridSettings()
+        backgroundImage = try c.decodeIfPresent(BackgroundImage.self, forKey: .backgroundImage)
     }
 }
 

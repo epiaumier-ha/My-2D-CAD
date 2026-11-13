@@ -193,6 +193,7 @@ extension Diagram {
             shapes[i] = s
         }
         for i in guides.indices { guides[i].position *= f }
+        backgroundImage = backgroundImage?.rescaled(by: f)
         if includingGridSpacing, grid.measure == .metric {
             grid.fixedSpacing = min(max(grid.fixedSpacing * Double(f), GridSettings.spacingRange.lowerBound),
                                     GridSettings.spacingRange.upperBound)
