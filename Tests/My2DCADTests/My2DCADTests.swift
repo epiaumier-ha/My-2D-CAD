@@ -608,7 +608,7 @@ final class PagesLayersGroupsTests: XCTestCase {
         store.selection = [a.id, b.id]
         store.groupSelection()
         XCTAssertEqual(store.expandedToGroups([a.id]), [a.id, b.id])
-        XCTAssertEqual(store.selectedGroupBounds.count, 1)
+        XCTAssertEqual(store.selectedGroupFrames.count, 1)
 
         XCTAssertTrue(store.insertFragment(store.makeFragment()!, offset: 20))
         let pasted = store.doc.shapes.suffix(2)
