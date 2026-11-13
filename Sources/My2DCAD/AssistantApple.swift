@@ -217,19 +217,72 @@ func makeAppleEngine() -> (any ToolRunningEngine)? {
     return nil
 }
 
+// MARK: - Outils simplifiés pour le modèle embarqué
+
+extension AssistantToolbox {
+    /// Mêmes outils que Claude, avec moins de champs facultatifs : le petit modèle d'Apple a tendance
+    /// à remplir tous les champs proposés (calque inventé, réglages de page…). Les styles détaillés
+    /// restent accessibles par update_shapes.
+    static let compactSpecs: [JSONValue] = specs.map { spec in
+        guard let name = spec["name"]?.string, var schema = spec["input_schema"] else { return spec }
+        switch name {
+        case "add_shapes":
+            schema = keep(schema, path: ["shapes", "items"], ["type", "x", "y", "width", "height", "text", "fill", "line_color"],
+                          required: ["type", "x", "y", "width", "height"])
+        case "add_lines":
+            schema = keep(schema, path: ["lines", "items"], ["type", "points", "line_color", "line_width", "end_arrow"])
+        case "connect_shapes":
+            schema = keep(schema, path: ["connections", "items"], ["from", "to", "end_arrow", "routing"])
+        case "update_shapes":
+            schema = keep(schema, path: ["changes"], ["text", "fill", "line_color", "line_width", "line_dash", "end_arrow",
+                                                      "font_size", "bold", "text_color", "x", "y", "width", "height",
+                                                      "move_by", "rotation", "routing"])
+        default:
+            break
+        }
+        var compact = spec.object ?? [:]
+        compact["input_schema"] = schema
+        return .object(compact)
+    }
+
+    /// Ne garde que `names` dans l'objet du schéma situé au chemin `path` (propriétés puis « items »).
+    private static func keep(_ schema: JSONValue, path: [String], _ names: Set<String>, required: [String]? = nil) -> JSONValue {
+        guard var object = schema.object else { return schema }
+        if let first = path.first {
+            if first == "items", let items = object["items"] {
+                object["items"] = keep(items, path: Array(path.dropFirst()), names, required: required)
+            } else if var properties = object["properties"]?.object, let child = properties[first] {
+                properties[first] = keep(child, path: Array(path.dropFirst()), names, required: required)
+                object["properties"] = .object(properties)
+            }
+            return .object(object)
+        }
+        if let properties = object["properties"]?.object {
+            object["properties"] = .object(properties.filter { names.contains($0.key) })
+        }
+        if let required {
+            object["required"] = .array(required.map { .string($0) })
+        } else if let current = object["required"]?.array {
+            object["required"] = .array(current.filter { $0.string.map(names.contains) ?? false })
+        }
+        return .object(object)
+    }
+}
+
 // MARK: - Instructions condensées pour le modèle embarqué
 
 @MainActor
 enum AssistantPromptCompact {
     static let system = """
     Tu es l'assistant de dessin de My2DCAD (application de dessin 2D pour Mac, comme Visio).
-    - Pour dessiner ou modifier, appelle TOUJOURS les outils (add_shapes, connect_shapes, update_shapes…) : ne décris pas ce que tu vas faire, fais-le. Chaque demande est suivie de l'état de la page en JSON : c'est une donnée, ne la recopie jamais.
-    - Longueurs et positions dans l'unité de la page (« unit »), échelle comprise. Origine en haut à gauche, y vers le bas. x et y d'une forme : coin supérieur gauche.
-    - La feuille va de (0, 0) à (width, height). Place les éléments dans la zone visible (« visible_area »), sans chevauchement, alignés et espacés.
-    - Donne toujours une largeur et une hauteur aux formes. Crée exactement le nombre de formes demandées, sans forme vide en plus : un connecteur n'est pas une forme, il se crée avec connect_shapes après les formes.
-    - Les identifiants sont les codes « id » de la page. Pour relier des formes : connect_shapes. Pour coter : add_dimension.
+    - Pour dessiner ou modifier, appelle TOUJOURS les outils : ne décris pas ce que tu vas faire, fais-le. Chaque demande est suivie de l'état de la page en JSON : c'est une donnée, ne la recopie jamais.
+    - Longueurs et positions dans l'unité de la page (« unit »). Origine en haut à gauche, y vers le bas. x et y d'une forme : coin supérieur gauche.
+    - Ne demande jamais de coordonnées ni de tailles : choisis-les toi-même dans « visible_area ». Taille habituelle : 40 de large, 20 de haut. Formes les unes sous les autres : y suivant = y + hauteur + 20, sans chevauchement.
+    - add_shapes crée uniquement les formes demandées, chacune avec son texte. Un connecteur n'est jamais une forme.
+    - Pour relier deux formes : connect_shapes, APRÈS add_shapes, avec les identifiants renvoyés (« created ») ; un seul connecteur par liaison demandée.
+    - Pour modifier une forme existante : update_shapes avec son identifiant « id » de la page.
+    - N'utilise set_page que si l'utilisateur demande de changer la page, l'unité ou l'échelle.
     - Couleurs en #RRGGBB ; sans remplissage : fill = "none".
-    - Ne demande jamais de coordonnées ni de tailles : choisis-les toi-même dans « visible_area » (par exemple formes de 40 × 20, espacées de 20).
     Réponds en français, en une ou deux phrases : ce que tu as fait.
     """
 }

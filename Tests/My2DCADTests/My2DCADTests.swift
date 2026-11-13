@@ -2334,6 +2334,25 @@ final class ScriptedToolEngine: ToolRunningEngine {
     func reset() { resets += 1 }
 }
 
+/// Enveloppe d'un moteur réel : garde la trace des appels d'outils (diagnostic des essais réels).
+@MainActor
+final class LoggingToolEngine: ToolRunningEngine {
+    let inner: any ToolRunningEngine
+    private(set) var log: [String] = []
+    init(_ inner: any ToolRunningEngine) { self.inner = inner }
+
+    func run(instructions: String, prompt: String, tools: [JSONValue],
+             execute: @escaping @MainActor @Sendable (String, JSONValue) throws -> String) async throws -> String {
+        try await inner.run(instructions: instructions, prompt: prompt, tools: tools) { [weak self] name, input in
+            let result = try execute(name, input)
+            self?.log.append("\(name) \(input.jsonText) -> \(result.prefix(120))")
+            return result
+        }
+    }
+
+    func reset() { inner.reset() }
+}
+
 @MainActor
 final class AppleAssistantTests: XCTestCase {
     /// Attente de la fin d'une réponse (le modèle embarqué peut prendre plusieurs dizaines de secondes).
@@ -2396,9 +2415,11 @@ final class AppleAssistantTests: XCTestCase {
     /// Essai réel avec Apple Intelligence (lent, dépend du modèle) : APPLE_AI_TEST=1 swift test --filter AppleAssistantTests
     func testRealAppleIntelligenceDrawsShapes() async throws {
         guard ProcessInfo.processInfo.environment["APPLE_AI_TEST"] == "1" else { throw XCTSkip("APPLE_AI_TEST=1 pour l'essai réel") }
-        guard case .available = AppleIntelligence.status, let engine = makeAppleEngine() else {
+        guard case .available = AppleIntelligence.status, let apple = makeAppleEngine() else {
             throw XCTSkip("Apple Intelligence indisponible")
         }
+        let engine = LoggingToolEngine(apple)
+        defer { print("Appels d'outils :\n  " + engine.log.joined(separator: "\n  ")) }
         let store = DocumentStore()
         let session = AssistantSession(store: store)
         let started = Date()
@@ -2408,12 +2429,54 @@ final class AppleAssistantTests: XCTestCase {
         print("Apple Intelligence (\(String(format: "%.1f", Date().timeIntervalSince(started))) s) :",
               session.entries.map { "[\($0.kind)] \($0.text.replacingOccurrences(of: "\n", with: " ").prefix(600))" }.joined(separator: " | "))
         print("Formes :", store.doc.shapes.map { "\($0.kind.rawValue) « \($0.text) »" }, "connecteurs :", store.doc.connectors.count)
-        XCTAssertFalse(store.doc.shapes.isEmpty, "le modèle a dessiné")
         XCTAssertNoThrow(try DiagramIO.validate(store.doc))
+        XCTAssertEqual(store.doc.shapes.map(\.text).sorted(), ["Début", "Fin"], "exactement les deux formes demandées")
+        XCTAssertEqual(store.doc.connectors.count, 1, "un seul connecteur")
+        let ids = Set(store.doc.shapes.map(\.id))
+        XCTAssertTrue(store.doc.connectors.allSatisfy { ids.contains($0.fromShape) && ids.contains($0.toShape) })
         // Deuxième demande dans la même conversation.
         session.send("Colore le losange en orange.", toolEngine: engine)
         await wait(session)
         print("Suite :", session.entries.suffix(3).map { "[\($0.kind)] \($0.text)" }.joined(separator: " | "))
         print("Couleurs :", store.doc.shapes.map { "\($0.kind.rawValue) \(AssistantToolbox.hex($0.fill))" })
+        let fin = store.doc.shapes.first { $0.text == "Fin" }
+        XCTAssertNotEqual(fin?.fill, RGBA.defaultFill, "le losange a changé de couleur")
+        XCTAssertEqual(store.doc.shapes.filter { $0.fill != RGBA.defaultFill }.count, 1, "seul le losange est recoloré")
+    }
+
+    func testCompactSpecsKeepAllToolsWithFewerFields() throws {
+        let compact = AssistantToolbox.compactSpecs
+        XCTAssertEqual(compact.map { $0["name"]?.string }, AssistantToolbox.specs.map { $0["name"]?.string }, "les 12 actions restent")
+        func item(_ tool: String, _ list: String) -> JSONValue? {
+            compact.first { $0["name"]?.string == tool }?["input_schema"]?["properties"]?[list]?["items"]
+        }
+        let shape = try XCTUnwrap(item("add_shapes", "shapes"))
+        XCTAssertEqual(Set(shape["properties"]?.object?.keys.map { $0 } ?? []),
+                       ["type", "x", "y", "width", "height", "text", "fill", "line_color"])
+        XCTAssertEqual(Set(shape["required"]?.array?.compactMap(\.string) ?? []), ["type", "x", "y", "width", "height"])
+        XCTAssertNil(shape["properties"]?["layer"], "pas de calque à inventer")
+        XCTAssertEqual(Set(item("connect_shapes", "connections")?["properties"]?.object?.keys.map { $0 } ?? []),
+                       ["from", "to", "end_arrow", "routing"])
+        #if canImport(FoundationModels)
+        if #available(macOS 26.0, *) {
+            for spec in compact { XCTAssertNoThrow(try AppleEngine.bridge(spec, execute: { _, _ in "ok" })) }
+        }
+        #endif
+    }
+
+    func testShapesCanBeDesignatedByUniqueText() {
+        let store = DocumentStore()
+        let tools = AssistantToolbox(store: store)
+        XCTAssertFalse(tools.run("add_shapes", ["shapes": [
+            ["type": "rectangle", "x": 0, "y": 0, "width": 40, "height": 20, "text": "Début"],
+            ["type": "diamond", "x": 0, "y": 40, "width": 40, "height": 20, "text": "Fin"],
+            ["type": "rectangle", "x": 60, "y": 0, "width": 40, "height": 20, "text": "Étape"],
+            ["type": "rectangle", "x": 60, "y": 40, "width": 40, "height": 20, "text": "Étape"],
+        ]]).isError)
+        let out = tools.run("connect_shapes", ["connections": [["from": "début", "to": "Fin"]]])
+        XCTAssertFalse(out.isError, out.result)
+        XCTAssertEqual(store.doc.connectors.count, 1)
+        XCTAssertTrue(tools.run("connect_shapes", ["connections": [["from": "Étape", "to": "Fin"]]]).result.contains("Plusieurs formes"))
+        XCTAssertTrue(tools.run("update_shapes", ["ids": ["Inconnu"], "changes": ["fill": "#FF0000"]]).isError)
     }
 }

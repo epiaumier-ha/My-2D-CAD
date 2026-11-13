@@ -180,7 +180,7 @@ final class AssistantSession: ObservableObject {
         }
         do {
             let reply = try await engine.run(instructions: AssistantPromptCompact.system, prompt: prompt,
-                                             tools: AssistantToolbox.specs) { [weak self] name, input in
+                                             tools: AssistantToolbox.compactSpecs) { [weak self] name, input in
                 let outcome = toolbox.run(name, input)
                 if let summary = outcome.summary { self?.entries.append(Entry(kind: .action, text: summary)) }
                 return outcome.isError ? "Erreur : \(outcome.result)" : outcome.result

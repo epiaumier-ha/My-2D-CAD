@@ -271,13 +271,19 @@ struct AssistantToolbox {
 
     private func resolve(_ text: String) throws -> UUID {
         let key = text.trimmingCharacters(in: .whitespaces).lowercased()
-        guard key.count >= 4 else { throw AssistantToolError("Identifiant trop court : \(text)") }
         let all = d.shapes.map(\.id) + d.connectors.map(\.id)
-        let matches = all.filter { $0.uuidString.lowercased().hasPrefix(key) }
-        guard matches.count == 1, let id = matches.first else {
-            throw AssistantToolError(matches.isEmpty ? "Élément introuvable : \(text)" : "Identifiant ambigu : \(text)")
+        let matches = key.count >= 4 ? all.filter { $0.uuidString.lowercased().hasPrefix(key) } : []
+        if matches.count == 1, let id = matches.first { return id }
+        // Repli : une forme désignée par son texte (« Début »), s'il est unique sur la page.
+        // Les petits modèles désignent souvent les formes ainsi plutôt que par leur identifiant.
+        if matches.isEmpty, !key.isEmpty {
+            let byText = d.shapes.filter { $0.text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == key }
+            if byText.count == 1 { return byText[0].id }
+            if byText.count > 1 { throw AssistantToolError("Plusieurs formes ont le texte « \(text) » : utilise leur identifiant") }
         }
-        return id
+        if key.count < 4 && matches.isEmpty { throw AssistantToolError("Identifiant trop court : \(text)") }
+        throw AssistantToolError(matches.isEmpty ? "Élément introuvable : \(text) (utilise un identifiant « id » de la page)"
+                                                 : "Identifiant ambigu : \(text)")
     }
 
     private func resolveAll(_ v: JSONValue?) throws -> Set<UUID> {
