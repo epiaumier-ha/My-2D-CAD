@@ -4,6 +4,7 @@ import SwiftUI
 struct StatusBar: View {
     @EnvironmentObject var store: DocumentStore
     @ObservedObject var pointer: PointerTracker
+    @ObservedObject private var userStencils = UserStencilLibrary.shared
 
     var body: some View {
         HStack(spacing: 14) {
@@ -46,6 +47,9 @@ struct StatusBar: View {
 
     /// Aide contextuelle selon l'outil (raccourcis utiles).
     private var hint: String {
+        if let id = userStencils.dropTargetID, let e = userStencils.entry(id) {
+            return "Relâcher pour ajouter la sélection au gabarit « \(e.stencil.name) » (elle reste dans le dessin)"
+        }
         switch store.backgroundMode {
         case .adjust:
             return "Image d'arrière-plan : glisser pour déplacer · poignées : taille (Maj : proportions libres) · flèches : décaler · Échap : terminer"

@@ -192,6 +192,7 @@ struct StencilPanel: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 6) {
+                    UserStencilsSection(library: .shared, search: search, open: $open)
                     ForEach(StencilCatalog.libraries) { library in
                         let items = filtered(library)
                         if !items.isEmpty {
@@ -208,6 +209,11 @@ struct StencilPanel: View {
                 }
                 .padding(8)
             }
+            // Zone visible du volet : seuls les gabarits visibles reçoivent une sélection glissée du dessin.
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
+                UserStencilLibrary.shared.panelFrame = $0
+            }
+            .onDisappear { UserStencilLibrary.shared.panelFrame = .zero }
             Divider()
             Text("Cliquez une forme puis tracez-la sur la feuille par cliquer-glisser (Maj : proportions, ⌥ : depuis le centre, Échap : annuler), ou glissez-la sur le dessin.")
                 .font(.caption)

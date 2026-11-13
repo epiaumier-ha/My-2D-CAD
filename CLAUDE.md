@@ -55,6 +55,7 @@ Xcode : ouvrir `Package.swift`, schéma « My2DCAD », ⌘R pour lancer, ⌘U po
 | `Ribbon.swift` | ruban (Accueil, Insertion, Création, Affichage, Développeur), thème Visio |
 | `InspectorView.swift` | volet « Format de la forme » |
 | `Stencils.swift` | bibliothèques de formes (volet Formes), dont « Cotation » |
+| `UserStencils.swift` | Mes formes : gabarits personnels (un fichier `.cad2dstencil` par gabarit dans Documents/Mes formes), ajout par « + » ou en glissant la sélection sur le gabarit |
 | `ShapeDrawing.swift` | tracé par cliquer-glisser (Maj : proportions, ⌥ : depuis le centre) |
 | `Rotation.swift` | rotation de toutes les formes, groupes, point de rotation (`pin`, `groupPin`) |
 | `Dimensions.swift` | cotes (linéaires, angulaires, rayon, diamètre) et collage aux formes |

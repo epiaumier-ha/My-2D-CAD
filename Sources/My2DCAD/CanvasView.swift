@@ -77,6 +77,8 @@ struct CanvasView: View {
     /// Point de collage visé par l'extrémité de cote déplacée, et forme dont les points de collage sont montrés.
     @State private var glueCandidate: GlueCandidate?
     @State private var glueHoverShape: UUID?
+    /// Cadre du canevas dans la fenêtre : une sélection glissée hors du dessin peut viser un gabarit de Mes formes.
+    @State private var canvasFrame: CGRect = .zero
 
     /// Moteur de dessin de la page affichée.
     private var painter: DiagramPainter {
@@ -102,10 +104,14 @@ struct CanvasView: View {
                 }
             }
             .gesture(dragGesture)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { canvasFrame = $0 }
             .contextMenu { canvasContextMenu }
             .dropDestination(for: String.self) { items, location in
-                guard let payload = items.first,
-                      let item = StencilCatalog.item(fromDragPayload: payload) else { return false }
+                guard let payload = items.first else { return false }
+                if let master = UserStencilLibrary.shared.master(fromDragPayload: payload) {
+                    return store.insertUserMaster(master, centeredAt: store.toWorld(location))
+                }
+                guard let item = StencilCatalog.item(fromDragPayload: payload) else { return false }
                 store.insertStencil(item, centeredAt: store.toWorld(location))
                 return true
             }
@@ -216,6 +222,13 @@ struct CanvasView: View {
     }
 
     // MARK: - Gestes
+
+    /// Gabarit de Mes formes sous le pointeur, quand il est sorti du dessin.
+    private func userStencilTarget(_ location: CGPoint) -> UUID? {
+        guard !CGRect(origin: .zero, size: canvasFrame.size).contains(location) else { return nil }
+        let p = CGPoint(x: canvasFrame.minX + location.x, y: canvasFrame.minY + location.y)
+        return UserStencilLibrary.shared.dropTarget(at: p)
+    }
 
     private var dragGesture: some Gesture {
         DragGesture(minimumDistance: 0)
@@ -376,6 +389,10 @@ struct CanvasView: View {
         switch current {
         case .moving(let origins, let start, let primary, let bounds):
             guard let po = origins[primary] else { return }
+            // Sélection glissée sur un gabarit de Mes formes (comme Visio) : le gabarit est mis en évidence.
+            let target = userStencilTarget(v.location)
+            if UserStencilLibrary.shared.dropTargetID != target { UserStencilLibrary.shared.dropTargetID = target }
+            if target != nil { NSCursor.dragCopy.set() }
             let rawDx = w.x - start.x, rawDy = w.y - start.y
             let snapped = store.snap(CGPoint(x: po.x + rawDx, y: po.y + rawDy))
             var dx = snapped.x - po.x, dy = snapped.y - po.y
@@ -654,8 +671,20 @@ struct CanvasView: View {
             store.commitTransaction()
         }
         guard let current = interaction else { return }
+        UserStencilLibrary.shared.dropTargetID = nil
 
         switch current {
+        case .moving(let origins, _, _, _):
+            // Lâchée sur un gabarit : la sélection y est ajoutée et reste à sa place dans le dessin.
+            guard let target = userStencilTarget(v.location) else { break }
+            var shapes = store.doc.shapes
+            for i in shapes.indices {
+                if let o = origins[shapes[i].id] { shapes[i].rect.origin = o }
+            }
+            store.doc.shapes = shapes
+            guides = []
+            do { try store.addSelection(to: target) } catch { UserStencilPrompt.error(error) }
+
         case .movingPin(let point):
             // Point ramené sur le centre (accrochage) : retour au point par défaut.
             guard let target = store.selectionRotationTarget, point.distance(to: target.pivot) > 1e-6 else { break }

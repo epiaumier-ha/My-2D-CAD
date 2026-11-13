@@ -3122,3 +3122,174 @@ final class FormatTabTests: XCTestCase {
         XCTAssertEqual(Set(FormatTab.allCases.map(\.rawValue)).count, 3)
     }
 }
+
+@MainActor
+final class UserStencilTests: XCTestCase {
+    private var dir: URL!
+
+    override func setUp() async throws {
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent("MesFormes-\(UUID().uuidString)")
+    }
+
+    override func tearDown() async throws {
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    /// Deux rectangles reliés par un connecteur, sur un calque, sélectionnés.
+    private func makeStore() throws -> (DocumentStore, [UUID]) {
+        let store = DocumentStore()
+        var ids: [UUID] = []
+        for x in [300.0, 500.0] {
+            store.insertShape(kind: .rectangle, rect: CGRect(x: x, y: 200, width: 100, height: 50))
+            ids.append(try XCTUnwrap(store.selection.first))
+        }
+        store.perform { $0.connectors.append(Connector(fromShape: ids[0], fromPort: 1, toShape: ids[1], toPort: 3)) }
+        store.selection = Set(ids)
+        return (store, ids)
+    }
+
+    func testMasterIsNormalizedAndGrouped() throws {
+        let (store, _) = try makeStore()
+        var fragment = try XCTUnwrap(store.makeFragment())
+        fragment.shapes[0].layerID = UUID()
+        let master = try XCTUnwrap(UserMaster.make(name: "Paire", from: fragment))
+        XCTAssertEqual(master.bounds, CGRect(x: 0, y: 0, width: 300, height: 50))
+        XCTAssertTrue(master.fragment.shapes.allSatisfy { $0.layerID == nil }, "les calques ne suivent pas la forme")
+        let groups = Set(master.fragment.shapes.map(\.groupID))
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertNotNil(groups.first!, "plusieurs formes deviennent un groupe")
+        XCTAssertEqual(master.fragment.connectors.count, 1)
+        XCTAssertNoThrow(try UserStencilIO.validate(UserStencil(name: "G", masters: [master])))
+    }
+
+    func testSingleShapeIsUngroupedAndNamedFromText() throws {
+        let (store, ids) = try makeStore()
+        store.perform { d in
+            if let i = d.shapes.firstIndex(where: { $0.id == ids[0] }) { d.shapes[i].text = "Lit double\nsecond" }
+        }
+        store.groupSelection()
+        store.selection = [ids[0]]
+        let fragment = try XCTUnwrap(store.makeFragment())
+        let master = try XCTUnwrap(UserMaster.make(name: UserMaster.defaultName(for: fragment.shapes), from: fragment))
+        XCTAssertEqual(master.name, "Lit double")
+        XCTAssertNil(master.fragment.shapes[0].groupID)
+        XCTAssertTrue(master.fragment.connectors.isEmpty)
+        XCTAssertEqual(UserMaster.defaultName(for: [Shape(kind: .ellipse, rect: .init(x: 0, y: 0, width: 1, height: 1))]), "Ellipse")
+    }
+
+    func testCreateAddSaveAndReload() throws {
+        let (store, _) = try makeStore()
+        let library = UserStencilLibrary(directory: dir)
+        let id = try library.createStencil(named: "Mobilier")
+        let masterID = try XCTUnwrap(try store.addSelection(to: id, library: library))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: dir.appendingPathComponent("Mobilier.cad2dstencil").path))
+
+        let reloaded = UserStencilLibrary(directory: dir)
+        reloaded.reload()
+        XCTAssertEqual(reloaded.entries.count, 1)
+        XCTAssertEqual(reloaded.entries[0].stencil, library.entries[0].stencil, "aller-retour fidèle")
+        XCTAssertTrue(reloaded.loadErrors.isEmpty)
+
+        try reloaded.renameMaster(masterID, in: id, to: "  Table  ")
+        XCTAssertEqual(reloaded.entry(id)?.stencil.masters.first?.name, "Table")
+        try reloaded.deleteMaster(masterID, in: id)
+        XCTAssertEqual(reloaded.entry(id)?.stencil.masters.count, 0)
+    }
+
+    func testInsertMasterCenteredAsNewGroup() throws {
+        let (store, ids) = try makeStore()
+        let fragment = try XCTUnwrap(store.makeFragment())
+        let master = try XCTUnwrap(UserMaster.make(name: "Paire", from: fragment))
+        store.snapEnabled = false
+        let before = store.doc.shapes.count
+        XCTAssertTrue(store.insertUserMaster(master, centeredAt: CGPoint(x: 1000, y: 1000)))
+        XCTAssertEqual(store.doc.shapes.count, before + 2)
+        XCTAssertEqual(store.doc.connectors.count, 2)
+        let inserted = store.selectedShapes
+        XCTAssertEqual(inserted.count, 2)
+        XCTAssertTrue(inserted.allSatisfy { !ids.contains($0.id) }, "nouveaux identifiants")
+        let b = inserted.dropFirst().reduce(inserted[0].bounds) { $0.union($1.bounds) }
+        XCTAssertEqual(b.midX, 1000, accuracy: 1e-9)
+        XCTAssertEqual(b.midY, 1000, accuracy: 1e-9)
+        XCTAssertEqual(Set(inserted.map(\.groupID)).count, 1)
+        XCTAssertNotEqual(inserted[0].groupID, master.fragment.shapes[0].groupID, "chaque pose est un nouveau groupe")
+        XCTAssertTrue(inserted.allSatisfy { $0.layerID == store.doc.activeLayerID })
+        store.undo()
+        XCTAssertEqual(store.doc.shapes.count, before, "une seule étape d'annulation")
+    }
+
+    func testFileNamesAreSafeAndUnique() throws {
+        XCTAssertEqual(UserStencilIO.fileName(for: "../..//Secret:x"), "-..--Secret-x")
+        XCTAssertEqual(UserStencilIO.fileName(for: "...cache"), "cache")
+        XCTAssertEqual(UserStencilIO.fileName(for: "   "), "Gabarit")
+        let library = UserStencilLibrary(directory: dir)
+        let a = try library.createStencil(named: "Plan")
+        let b = try library.createStencil(named: "Plan")
+        XCTAssertNotEqual(library.entry(a)?.url, library.entry(b)?.url)
+        XCTAssertEqual(library.entry(b)?.url.lastPathComponent, "Plan 2.cad2dstencil")
+        XCTAssertTrue(library.entries.allSatisfy {
+            $0.url.deletingLastPathComponent().resolvingSymlinksInPath() == dir.resolvingSymlinksInPath()
+        }, "les noms dangereux restent dans le dossier")
+
+        try library.renameStencil(a, to: "Cuisine")
+        XCTAssertEqual(library.entry(a)?.url.lastPathComponent, "Cuisine.cad2dstencil")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("Plan.cad2dstencil").path))
+    }
+
+    func testInvalidFilesAreRejected() throws {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var bad = UserStencil(name: "Bad")
+        bad.version = 99
+        XCTAssertThrowsError(try UserStencilIO.validate(bad))
+        XCTAssertThrowsError(try UserStencilIO.validate(UserStencil(name: "  ")))
+        let orphan = Connector(fromShape: UUID(), fromPort: 0, toShape: UUID(), toPort: 0)
+        let shape = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 10, height: 10))
+        let m = UserMaster(name: "X", fragment: ClipboardFragment(shapes: [shape], connectors: [orphan]))
+        XCTAssertThrowsError(try UserStencilIO.validate(UserStencil(name: "G", masters: [m])), "connecteur orphelin")
+        let empty = UserMaster(name: "X", fragment: ClipboardFragment(shapes: [], connectors: []))
+        XCTAssertThrowsError(try UserStencilIO.validate(UserStencil(name: "G", masters: [empty])))
+        var huge = shape
+        huge.rect.origin.x = .infinity
+        let inf = UserMaster(name: "X", fragment: ClipboardFragment(shapes: [huge], connectors: []))
+        XCTAssertThrowsError(try UserStencilIO.validate(UserStencil(name: "G", masters: [inf])))
+
+        // Fichier illisible dans le dossier : ignoré et signalé, les autres gabarits restent chargés.
+        try Data("pas du json".utf8).write(to: dir.appendingPathComponent("Abîmé.cad2dstencil"))
+        let library = UserStencilLibrary(directory: dir)
+        try library.createStencil(named: "Bon")
+        library.reload()
+        XCTAssertEqual(library.entries.map(\.stencil.name), ["Bon"])
+        XCTAssertEqual(library.loadErrors.count, 1)
+    }
+
+    func testImportCopiesAndRenewsDuplicateID() throws {
+        let library = UserStencilLibrary(directory: dir)
+        let id = try library.createStencil(named: "Réseau")
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent("import-\(UUID().uuidString).cad2dstencil")
+        defer { try? FileManager.default.removeItem(at: source) }
+        try UserStencilIO.save(try XCTUnwrap(library.entry(id)).stencil, to: source)
+        let imported = try library.importStencil(from: source)
+        XCTAssertNotEqual(imported, id, "un gabarit copié reçoit un nouvel identifiant")
+        XCTAssertEqual(library.entries.count, 2)
+        XCTAssertEqual(library.entry(imported)?.url.lastPathComponent, "Réseau 2.cad2dstencil")
+    }
+
+    func testDragPayloadAndDropTarget() throws {
+        let (store, _) = try makeStore()
+        let library = UserStencilLibrary(directory: dir)
+        let id = try library.createStencil(named: "G")
+        let m = try XCTUnwrap(try store.addSelection(to: id, library: library))
+        let payload = UserStencilLibrary.dragPayload(stencil: id, master: m)
+        XCTAssertEqual(library.master(fromDragPayload: payload)?.id, m)
+        XCTAssertNil(library.master(fromDragPayload: "my2dcad.usermaster:" + id.uuidString + "/" + UUID().uuidString))
+        XCTAssertNil(library.master(fromDragPayload: "my2dcad.usermaster:abc"))
+        XCTAssertNil(library.master(fromDragPayload: String(repeating: "x", count: 1000)))
+
+        library.panelFrame = CGRect(x: 0, y: 0, width: 200, height: 400)
+        library.dropFrames[id] = CGRect(x: 0, y: 380, width: 200, height: 100)
+        XCTAssertEqual(library.dropTarget(at: CGPoint(x: 10, y: 390)), id)
+        XCTAssertNil(library.dropTarget(at: CGPoint(x: 10, y: 450)), "partie du gabarit masquée par le défilement")
+        library.dropFrames[UUID()] = CGRect(x: 0, y: 0, width: 200, height: 50)
+        XCTAssertNil(library.dropTarget(at: CGPoint(x: 10, y: 10)), "gabarit inconnu")
+    }
+}
