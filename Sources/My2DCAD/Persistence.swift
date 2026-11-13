@@ -151,6 +151,9 @@ enum DiagramIO {
             guard s.groupRotation.isFinite, abs(s.groupRotation) <= 360 else {
                 throw DiagramIOError.invalid("rotation de groupe invalide")
             }
+            guard [s.pin, s.groupPin].allSatisfy({ p in
+                p.map { Shape.pinRange.contains($0.x) && Shape.pinRange.contains($0.y) } ?? true
+            }) else { throw DiagramIOError.invalid("point de rotation invalide") }
             guard s.text.count <= maxTextLength else { throw DiagramIOError.invalid("texte trop long") }
             let c = [s.fill.r, s.fill.g, s.fill.b, s.fill.a]
             guard c.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }) else {

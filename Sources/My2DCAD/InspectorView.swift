@@ -104,11 +104,9 @@ struct InspectorView: View {
                 if !s.kind.isPath {
                     field("Largeur", value: s.rect.width, minValue: 1) { $0.rect.size.width = $1 }
                     field("Hauteur", value: s.rect.height, minValue: 1) { $0.rect.size.height = $1 }
-                    NumericField(title: "Rotation (°)", value: s.rotation, fractionDigits: 1, context: s.id) { v in
-                        store.editSelectedShape(key: "rotation") { $0.rotation = normalizedAngle(v) }
-                    }
                 }
             }
+            if let target = store.selectionRotationTarget { rotationSection(target, single: s) }
         } else if store.selection.count == 1, let c = selectedConnectors.first {
             pane("Connecteur") {
                 LabeledContent("De", value: store.shapeLabel(c.fromShape))
@@ -137,24 +135,39 @@ struct InspectorView: View {
             pane("Sélection") {
                 Text(selectionSummary)
             }
-            if let frame = store.selectionRotationFrame { selectionRotationSection(frame) }
+            if let target = store.selectionRotationTarget, target.frame != nil { rotationSection(target, single: nil) }
             if !store.selectedShapes.isEmpty && !store.doc.layers.isEmpty { layerSection }
         }
     }
 
-    /// Rotation d'un groupe (angle du groupe) ou d'une sélection multiple (angle de départ 0).
-    private func selectionRotationSection(_ frame: RotationFrame) -> some View {
-        let isGroup = store.doc.isWholeGroup(store.selectedShapes)
+    /// Rotation de la sélection : rotation d'une forme, angle d'un trait (direction du premier au
+    /// dernier point), angle d'un groupe, ou rotation d'une sélection multiple (angle de départ 0) ;
+    /// point de rotation (centre par défaut, déplaçable à la souris).
+    private func rotationSection(_ target: RotationTarget, single: Shape?) -> some View {
+        let title: String
+        if let single {
+            title = single.kind.isPath ? "Angle (°)" : "Rotation (°)"
+        } else {
+            title = target.isGroup ? "Rotation du groupe (°)" : "Faire pivoter de (°)"
+        }
         return pane("Rotation") {
-            NumericField(title: isGroup ? "Rotation du groupe (°)" : "Faire pivoter de (°)",
-                         value: frame.angle, fractionDigits: 1, context: store.selection) { v in
+            NumericField(title: title, value: target.angle, fractionDigits: 1, context: store.selection) { v in
                 store.setSelectionRotation(v)
             }
             HStack {
                 Button { store.rotateSelection(by: -90) } label: { Label("90° à gauche", systemImage: "rotate.left") }
                 Button { store.rotateSelection(by: 90) } label: { Label("90° à droite", systemImage: "rotate.right") }
             }
-            Text("Ou poignée ronde au-dessus du cadre (Maj : pas de 15°). Toutes les formes pivotent autour du centre du cadre.")
+            LabeledContent("Point de rotation") {
+                HStack(spacing: 6) {
+                    Text(target.hasCustomPivot ? "Personnalisé" : "Centre")
+                        .foregroundStyle(target.hasCustomPivot ? Color.orange : Color.secondary)
+                    Button("Centre") { store.setRotationPin(nil) }
+                        .disabled(!target.hasCustomPivot)
+                        .help("Ramener le point de rotation au centre")
+                }
+            }
+            Text("Poignée ronde : rotation (Maj : pas de 15°). Glissez le point ⊕ pour changer le point de rotation ; il s'accroche aux coins, milieux et centres des formes.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

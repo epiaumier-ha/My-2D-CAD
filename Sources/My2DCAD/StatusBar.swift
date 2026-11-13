@@ -55,10 +55,10 @@ struct StatusBar: View {
                 return "Glisser une extrémité sur un coin, un milieu ou un centre pour coller la cote · Poignée ronde : position de la cote"
             }
             if store.selection.count > 1 {
-                return "Poignée ronde : rotation de l'ensemble (Maj : 15°) · Maj-clic : ajouter ou retirer · Flèches : déplacer · clic droit : aligner, grouper"
+                return "Poignée ronde : rotation de l'ensemble (Maj : 15°) · ⊕ : point de rotation · Maj-clic : ajouter ou retirer · clic droit : aligner, grouper"
             }
             if !store.selection.isEmpty {
-                return "Double-clic ou Entrée : texte · ⌥-glisser : dupliquer · Flèches : déplacer · clic droit : plus d'actions"
+                return "Double-clic ou Entrée : texte · Poignée ronde : rotation · ⊕ : point de rotation · ⌥-glisser : dupliquer · clic droit : plus d'actions"
             }
             return "Glisser une forme du volet Formes · Glisser sur le vide : sélection multiple · Espace : déplacer la vue"
         case .pan: return "Glisser pour déplacer la vue · V : pointeur"

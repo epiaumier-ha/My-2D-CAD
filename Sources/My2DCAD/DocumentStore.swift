@@ -107,8 +107,15 @@ final class DocumentStore: ObservableObject {
         }
     }
     @Published var selection: Set<UUID> = [] {
-        didSet { if selection != oldValue { updateSelectionOrder() } }
+        didSet {
+            guard selection != oldValue else { return }
+            updateSelectionOrder()
+            // Le point de rotation d'une sélection multiple ne vaut que pour cette sélection.
+            if selectionPin != nil && selectionPin?.ids != selection { selectionPin = nil }
+        }
     }
+    /// Point de rotation choisi pour la sélection multiple en cours (hors groupe).
+    @Published var selectionPin: SelectionPin?
     /// Sélection dans l'ordre où les éléments ont été sélectionnés : la première forme est la forme
     /// principale des opérations (comme dans Visio). Ajouts groupés : dans l'ordre d'empilement.
     private(set) var selectionOrder: [UUID] = []

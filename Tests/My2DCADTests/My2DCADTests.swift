@@ -2036,3 +2036,113 @@ final class GroupRotationTests: XCTestCase {
         XCTAssertEqual(store.doc.shape(rectID)!.rotation, 20, accuracy: 1e-9, "les formes gardent leur rotation")
     }
 }
+
+@MainActor
+final class RotationPivotTests: XCTestCase {
+    func testShapeRotatesAroundItsCentreByDefault() throws {
+        let store = DocumentStore()
+        let s = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 100, height: 40))
+        store.perform { $0.shapes = [s] }
+        store.selection = [s.id]
+        let target = try XCTUnwrap(store.selectionRotationTarget)
+        XCTAssertEqual(target.pivot, CGPoint(x: 50, y: 20))
+        XCTAssertFalse(target.hasCustomPivot)
+        store.setSelectionRotation(30)
+        let r = store.doc.shape(s.id)!
+        XCTAssertEqual(r.rotation, 30, accuracy: 1e-9)
+        XCTAssertEqual(r.center.x, 50, accuracy: 1e-3)
+        XCTAssertEqual(r.center.y, 20, accuracy: 1e-3)
+    }
+
+    func testChosenPivotStaysFixedAndFollowsTheShape() throws {
+        let store = DocumentStore()
+        let s = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 100, height: 40))
+        store.perform { $0.shapes = [s] }
+        store.selection = [s.id]
+        store.setRotationPin(CGPoint(x: 0, y: 0))          // coin supérieur gauche
+        XCTAssertEqual(store.doc.shape(s.id)!.pin, CGPoint(x: 0, y: 0))
+        XCTAssertTrue(store.selectionRotationTarget!.hasCustomPivot)
+
+        store.rotateSelection(by: 90)
+        let r = store.doc.shape(s.id)!
+        XCTAssertEqual(r.corners[0].x, 0, accuracy: 1e-3, "le coin choisi ne bouge pas")
+        XCTAssertEqual(r.corners[0].y, 0, accuracy: 1e-3)
+        XCTAssertEqual(r.pivotPoint.x, 0, accuracy: 1e-3)
+
+        store.nudgeSelection(dx: 30, dy: 10)
+        XCTAssertEqual(store.doc.shape(s.id)!.pivotPoint.x, 30, accuracy: 1e-3, "le point suit la forme")
+        XCTAssertEqual(store.doc.shape(s.id)!.pivotPoint.y, 10, accuracy: 1e-3)
+
+        store.setRotationPin(nil)
+        XCTAssertNil(store.doc.shape(s.id)!.pin)
+        store.undo()
+        XCTAssertNotNil(store.doc.shape(s.id)!.pin, "changer le point s'annule")
+    }
+
+    func testLineAngleCanBeSetAroundItsMiddleOrAChosenPoint() throws {
+        let store = DocumentStore()
+        var line = Shape(kind: .line, rect: .zero, line: .pathDefault)
+        line.setWorldPoints([CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0)])
+        store.perform { $0.shapes = [line] }
+        store.selection = [line.id]
+        XCTAssertEqual(store.selectionRotationTarget?.angle, 0)
+
+        store.setSelectionRotation(90)                    // autour du milieu (50, 0)
+        var p = store.doc.shape(line.id)!.worldPoints
+        XCTAssertEqual(p[0].x, 50, accuracy: 1e-3); XCTAssertEqual(p[0].y, -50, accuracy: 1e-3)
+        XCTAssertEqual(p[1].x, 50, accuracy: 1e-3); XCTAssertEqual(p[1].y, 50, accuracy: 1e-3)
+        XCTAssertEqual(store.doc.shape(line.id)!.displayAngle, 90, accuracy: 1e-6)
+
+        store.setRotationPin(p[0])                         // point de rotation : début du trait
+        store.setSelectionRotation(0)
+        p = store.doc.shape(line.id)!.worldPoints
+        XCTAssertEqual(p[0].x, 50, accuracy: 1e-3, "le début du trait reste en place")
+        XCTAssertEqual(p[0].y, -50, accuracy: 1e-3)
+        XCTAssertEqual(p[1].x, 150, accuracy: 1e-3)
+        XCTAssertEqual(p[1].y, -50, accuracy: 1e-3)
+    }
+
+    func testGroupPivotIsKeptForTheGroup() throws {
+        let store = DocumentStore()
+        let a = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 40, height: 20))
+        let b = Shape(kind: .ellipse, rect: CGRect(x: 60, y: 0, width: 40, height: 20))
+        store.perform { $0.shapes = [a, b] }
+        store.selection = [a.id, b.id]
+        store.groupSelection()
+        store.setRotationPin(CGPoint(x: 100, y: 20))       // coin bas-droit du cadre
+        XCTAssertTrue(store.selectedShapes.allSatisfy { $0.groupPin != nil })
+        store.rotateSelection(by: 180)
+        let frame = try XCTUnwrap(store.selectionRotationFrame)
+        XCTAssertEqual(frame.angle, 180, accuracy: 1e-9)
+        let pivot = try XCTUnwrap(store.selectionRotationTarget?.pivot)
+        XCTAssertEqual(pivot.x, 100, accuracy: 1e-3, "le point de rotation du groupe reste en place")
+        XCTAssertEqual(pivot.y, 20, accuracy: 1e-3)
+        XCTAssertEqual(store.doc.shape(a.id)!.center.x, 180, accuracy: 1e-3)
+        XCTAssertEqual(store.doc.shape(a.id)!.center.y, 30, accuracy: 1e-3)
+        XCTAssertNoThrow(try DiagramIO.validate(store.doc))
+    }
+
+    func testMultipleSelectionPivotIsForgottenWithTheSelection() {
+        let store = DocumentStore()
+        let a = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 40, height: 20))
+        let b = Shape(kind: .rectangle, rect: CGRect(x: 60, y: 0, width: 40, height: 20))
+        store.perform { $0.shapes = [a, b] }
+        store.selection = [a.id, b.id]
+        store.setRotationPin(CGPoint(x: 0, y: 0))
+        XCTAssertEqual(store.selectionRotationTarget?.pivot, CGPoint(x: 0, y: 0))
+        store.selection = [a.id]
+        store.selection = [a.id, b.id]
+        XCTAssertEqual(store.selectionRotationTarget?.pivot, CGPoint(x: 50, y: 10), "nouvelle sélection : centre")
+    }
+
+    func testPinIsSavedAndValidated() throws {
+        var s = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 10, height: 10))
+        s.pin = CGPoint(x: 0.25, y: 1)
+        let decoded = try JSONDecoder().decode(Shape.self, from: JSONEncoder().encode(s))
+        XCTAssertEqual(decoded.pin, CGPoint(x: 0.25, y: 1))
+        var d = Diagram()
+        s.pin = CGPoint(x: CGFloat.nan, y: 0)
+        d.shapes = [s]
+        XCTAssertThrowsError(try DiagramIO.validate(d))
+    }
+}

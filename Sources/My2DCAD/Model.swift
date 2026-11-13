@@ -79,10 +79,16 @@ struct Shape: Identifiable, Codable, Equatable {
     /// Angle du groupe de la forme, en degrés (identique pour tous les membres) : le cadre du groupe
     /// reste orienté après une rotation. 0 hors groupe.
     var groupRotation: Double = 0
+    /// Point de rotation choisi (nil : centre), relatif à la forme : fraction du rectangle (formes),
+    /// ou repère premier point → dernier point (traits, courbes, cotes). Il suit la forme.
+    var pin: CGPoint?
+    /// Point de rotation du groupe de la forme (nil : centre du cadre), fraction du cadre orienté du
+    /// groupe ; identique pour tous les membres.
+    var groupPin: CGPoint?
 
     enum CodingKeys: String, CodingKey {
         case id, kind, rect, text, fill, rotation, points, line, textStyle, noFill, fillTransparency, layerID, groupID
-        case segments, textOffset, textBlockWidth, glue, evenOdd, groupRotation
+        case segments, textOffset, textBlockWidth, glue, evenOdd, groupRotation, pin, groupPin
     }
 
     /// Couleur de remplissage effective (nil si aucun remplissage).
@@ -119,6 +125,8 @@ extension Shape {
         glue = try c.decodeIfPresent([GluePoint].self, forKey: .glue) ?? []
         evenOdd = try c.decodeIfPresent(Bool.self, forKey: .evenOdd) ?? false
         groupRotation = try c.decodeIfPresent(Double.self, forKey: .groupRotation) ?? 0
+        pin = try c.decodeIfPresent(CGPoint.self, forKey: .pin)
+        groupPin = try c.decodeIfPresent(CGPoint.self, forKey: .groupPin)
     }
 }
 

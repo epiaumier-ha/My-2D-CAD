@@ -35,9 +35,13 @@ private enum Interaction {
     /// Largeur du bloc de texte (poignées latérales).
     case resizingText(id: UUID, frame: TextFrame)
     case reconnecting(id: UUID, start: Bool, current: CGPoint)
-    case rotating(original: Shape, startAngle: CGFloat)
-    /// Rotation d'un groupe ou d'une sélection multiple : formes d'origine, cadre de départ, angle du pointeur.
-    case rotatingSelection(originals: [Shape], frame: RotationFrame, startAngle: CGFloat, angle: Double)
+    /// Rotation à la poignée (forme seule, groupe ou sélection multiple) : formes d'origine, cadre de
+    /// départ (nil pour une forme seule), point de rotation, angle de départ de la sélection, angle du
+    /// pointeur au départ, angle courant.
+    case rotating(originals: [Shape], frame: RotationFrame?, pivot: CGPoint, baseAngle: Double,
+                  startAngle: CGFloat, angle: Double)
+    /// Déplacement du point de rotation (accrochage aux points des formes et à la grille).
+    case movingPin(current: CGPoint)
     /// Tracé d'une forme (outil du ruban, ou forme de bibliothèque `stencil`) : point de départ et pointeur.
     case drawing(kind: ShapeKind, stencil: StencilItem?, start: CGPoint, current: CGPoint)
     case connecting(from: UUID, port: Int, current: CGPoint)
@@ -106,7 +110,7 @@ struct CanvasView: View {
                     store.hover = p
                     store.mouseInCanvas = true
                     store.pointer.world = store.toWorld(p)
-                    (store.activeStencil != nil ? NSCursor.crosshair : cursor(for: store.tool)).set()
+                    hoverCursor(at: p).set()
                 case .ended:
                     store.mouseInCanvas = false
                     store.pointer.world = nil
@@ -167,6 +171,25 @@ struct CanvasView: View {
 
     private func topCenterScreenPoint(_ s: Shape) -> CGPoint {
         store.toScreen(s.toWorld(CGPoint(x: s.rect.midX, y: s.rect.minY)))
+    }
+
+    /// Poignée de rotation de la sélection (forme, trait, groupe ou sélection multiple), en coordonnées écran.
+    private func rotationKnob(_ target: RotationTarget) -> CGPoint? {
+        if let f = target.frame { return rotationHandleScreenPoint(f) }
+        guard let s = store.singleSelectedShape ?? store.selectedShapes.first else { return nil }
+        return s.kind.isPath ? pathRotationHandleScreenPoint(s) : rotationHandleScreenPoint(s)
+    }
+
+    /// Haut du tracé (milieu du bord supérieur de son rectangle englobant), en coordonnées écran.
+    private func pathTopScreenPoint(_ s: Shape) -> CGPoint {
+        let b = s.bounds
+        return store.toScreen(CGPoint(x: b.midX, y: b.minY))
+    }
+
+    /// Poignée de rotation d'un trait, d'une courbe ou d'une cote, au-dessus du tracé.
+    private func pathRotationHandleScreenPoint(_ s: Shape) -> CGPoint {
+        let top = pathTopScreenPoint(s)
+        return CGPoint(x: top.x, y: top.y - rotationHandleDistance)
     }
 
     /// Poignée de rotation d'un groupe ou d'une sélection multiple, au-dessus de son cadre.
@@ -251,10 +274,13 @@ struct CanvasView: View {
                     return
                 }
             }
-            if let f = store.selectionRotationFrame, rotationHandleScreenPoint(f).distance(to: screen) <= 9 {
-                // Groupe ou sélection multiple : rotation de l'ensemble autour du centre de son cadre.
-                interaction = .rotatingSelection(originals: store.selectedShapes, frame: f,
-                                                 startAngle: atan2(w.y - f.center.y, w.x - f.center.x), angle: f.angle)
+            let target = store.selectionRotationTarget
+            if let target, let knob = rotationKnob(target), knob.distance(to: screen) <= 9 {
+                // Poignée de rotation : toute la sélection pivote autour de son point de rotation.
+                let p = target.pivot
+                interaction = .rotating(originals: store.selectedShapes, frame: target.frame, pivot: p,
+                                        baseAngle: target.angle, startAngle: atan2(w.y - p.y, w.x - p.x),
+                                        angle: target.angle)
                 return
             }
             if let s = store.singleSelectedShape, s.kind.isPath {
@@ -264,15 +290,15 @@ struct CanvasView: View {
                     return
                 }
             } else if let s = store.singleSelectedShape {
-                if rotationHandleScreenPoint(s).distance(to: screen) <= 9 {
-                    let c = s.center
-                    interaction = .rotating(original: s, startAngle: atan2(w.y - c.y, w.x - c.x))
-                    return
-                }
                 if let h = handleHit(s, at: screen) {
                     interaction = .resizing(original: s, handle: h)
                     return
                 }
+            }
+            // Point de rotation : il se déplace à la souris.
+            if let target, store.toScreen(target.pivot).distance(to: screen) <= 6 {
+                interaction = .movingPin(current: target.pivot)
+                return
             }
             // Bloc de texte de la forme sélectionnée : poignée jaune (déplacer) et poignées latérales (largeur).
             if let s = store.singleSelectedShape, let tf = store.doc.textFrame(s) {
@@ -377,28 +403,23 @@ struct CanvasView: View {
                                                   width: width, height: height)
             }
 
-        case .rotating(let original, let startAngle):
-            let c = original.center
-            let currentAngle = atan2(w.y - c.y, w.x - c.x)
-            var degrees = original.rotation + Double(currentAngle - startAngle) * 180 / .pi
-            // Maj : pas de 15°, sinon précision au dixième de degré.
-            degrees = NSEvent.modifierFlags.contains(.shift)
-                ? (degrees / 15).rounded() * 15
-                : (degrees * 10).rounded() / 10
-            if let i = shapeIndex(original.id) {
-                store.doc.shapes[i].rotation = normalizedAngle(degrees)
-            }
-
-        case .rotatingSelection(let originals, let frame, let startAngle, _):
-            let c = frame.center
-            let currentAngle = atan2(w.y - c.y, w.x - c.x)
-            var target = frame.angle + Double(currentAngle - startAngle) * 180 / .pi
-            // Maj : pas de 15°, sinon précision au dixième de degré (angle du cadre).
+        case .rotating(let originals, let frame, let pivot, let baseAngle, let startAngle, _):
+            // Pointeur sur le point de rotation : angle indéfini, on attend qu'il s'en écarte.
+            guard w.distance(to: pivot) * store.zoom > 3 else { return }
+            let currentAngle = atan2(w.y - pivot.y, w.x - pivot.x)
+            var target = baseAngle + Double(currentAngle - startAngle) * 180 / .pi
+            // Maj : pas de 15°, sinon précision au dixième de degré (angle affiché).
             target = NSEvent.modifierFlags.contains(.shift)
                 ? (target / 15).rounded() * 15
                 : (target * 10).rounded() / 10
-            store.applyLiveRotation(originals: originals, by: target - frame.angle, around: c)
-            interaction = .rotatingSelection(originals: originals, frame: frame, startAngle: startAngle, angle: target)
+            store.applyLiveRotation(originals: originals, by: target - baseAngle, around: pivot)
+            interaction = .rotating(originals: originals, frame: frame, pivot: pivot, baseAngle: baseAngle,
+                                    startAngle: startAngle, angle: target)
+
+        case .movingPin:
+            // Accrochage : coins, milieux et centres des formes (la forme elle-même comprise), puis grille.
+            glueCandidate = store.doc.nearestGlueAnchor(to: w, tolerance: 8 / store.zoom, excluding: UUID())
+            interaction = .movingPin(current: glueCandidate?.point ?? snapPoint(w))
 
         case .editingPoint(let id, let index):
             guard let i = shapeIndex(id) else { return }
@@ -481,6 +502,11 @@ struct CanvasView: View {
         guard let current = interaction else { return }
 
         switch current {
+        case .movingPin(let point):
+            // Point ramené sur le centre (accrochage) : retour au point par défaut.
+            guard let target = store.selectionRotationTarget, point.distance(to: target.pivot) > 1e-6 else { break }
+            store.applyRotationPin(point.distance(to: target.center) < 1e-6 ? nil : point)
+
         case .drawing(let kind, let stencil, let start, let current):
             // Un simple clic (sans glisser) ne crée rien : la forme se trace par cliquer-glisser.
             // L'outil ou la forme de bibliothèque reste actif (comme Visio) : Échap ou V pour revenir au pointeur.
@@ -779,6 +805,16 @@ struct CanvasView: View {
         }
     }
 
+    /// Curseur au survol : croix pour tracer une forme de bibliothèque ou déplacer le point de rotation.
+    private func hoverCursor(at p: CGPoint) -> NSCursor {
+        if store.activeStencil != nil { return .crosshair }
+        if store.tool == .select, let target = store.selectionRotationTarget,
+           store.toScreen(target.pivot).distance(to: p) <= 6 {
+            return .crosshair
+        }
+        return cursor(for: store.tool)
+    }
+
     private func cursor(for tool: Tool) -> NSCursor {
         switch tool {
         case .select: return .arrow
@@ -802,29 +838,19 @@ struct CanvasView: View {
         let groupFrames = store.selectedGroupFrames
         for f in groupFrames { strokeFrame(&ctx, f, dash: [5, 3]) }
         // Groupe ou sélection multiple : cadre de l'ensemble et poignée de rotation.
-        // Pendant la rotation : le cadre de départ pivote avec les formes.
-        var rotatingAngle: Double?
+        // Pendant la rotation : le cadre de départ pivote avec les formes, autour du point de rotation.
         var frame = store.selectionRotationFrame
-        if case .rotatingSelection(_, let start, _, let angle) = interaction {
-            rotatingAngle = angle
-            frame = RotationFrame(center: start.center, size: start.size, angle: angle)
+        if case .rotating(_, let start?, let pivot, let base, _, let angle) = interaction {
+            let a = CGFloat((angle - base) * .pi / 180)
+            frame = RotationFrame(center: start.center.rotated(by: a, around: pivot), size: start.size,
+                                  angle: start.angle + angle - base)
         }
         if let f = frame {
             if !groupFrames.contains(where: { $0.isClose(to: f) }) { strokeFrame(&ctx, f, dash: [2, 3]) }
-            let top = store.toScreen(f.topCenter(margin: 7 / store.zoom))
-            let knob = rotationHandleScreenPoint(f)
-            var stem = Path()
-            stem.move(to: top)
-            stem.addLine(to: knob)
-            ctx.stroke(stem, with: .color(accent), lineWidth: 1)
-            let knobRect = CGRect(x: knob.x - 5, y: knob.y - 5, width: 10, height: 10)
-            ctx.fill(Path(ellipseIn: knobRect), with: .color(.white))
-            ctx.stroke(Path(ellipseIn: knobRect), with: .color(accent), lineWidth: 1.5)
-            if let angle = rotatingAngle {
-                let label = Text("\(normalizedAngle(angle), specifier: "%.1f")°").font(.system(size: 11)).foregroundColor(accent)
-                ctx.draw(label, at: CGPoint(x: knob.x + 14, y: knob.y), anchor: .leading)
-            }
+            drawRotationKnob(&ctx, from: store.toScreen(f.topCenter(margin: 7 / store.zoom)),
+                             knob: rotationHandleScreenPoint(f))
         }
+        drawPivot(&ctx)
         for s in store.selectedShapes {
             if s.kind.isPath {
                 ctx.stroke(painter.screenPath(kind: s.kind, points: s.worldPoints),
@@ -884,19 +910,15 @@ struct CanvasView: View {
                 ctx.fill(handle, with: .color(glued ? .green : .white))
                 ctx.stroke(handle, with: .color(glued ? Color(red: 0, green: 0.45, blue: 0) : accent), lineWidth: 1.5)
             }
+            // Poignée de rotation au-dessus du tracé.
+            drawRotationKnob(&ctx, from: pathTopScreenPoint(s), knob: pathRotationHandleScreenPoint(s))
+            drawRotationAngle(&ctx, s, knob: pathRotationHandleScreenPoint(s))
             return
         }
 
         // Poignée de rotation, reliée au milieu du bord supérieur.
-        let top = topCenterScreenPoint(s)
         let knob = rotationHandleScreenPoint(s)
-        var stem = Path()
-        stem.move(to: top)
-        stem.addLine(to: knob)
-        ctx.stroke(stem, with: .color(accent), lineWidth: 1)
-        let knobRect = CGRect(x: knob.x - 5, y: knob.y - 5, width: 10, height: 10)
-        ctx.fill(Path(ellipseIn: knobRect), with: .color(.white))
-        ctx.stroke(Path(ellipseIn: knobRect), with: .color(accent), lineWidth: 1.5)
+        drawRotationKnob(&ctx, from: topCenterScreenPoint(s), knob: knob)
 
         // Poignées de redimensionnement.
         for h in Handle.allCases {
@@ -906,9 +928,56 @@ struct CanvasView: View {
             ctx.stroke(Path(box), with: .color(accent), lineWidth: 1.5)
         }
 
-        if case .rotating = interaction {
-            let label = Text("\(s.rotation, specifier: "%.1f")°").font(.system(size: 11)).foregroundColor(accent)
-            ctx.draw(label, at: CGPoint(x: knob.x + 14, y: knob.y), anchor: .leading)
+        drawRotationAngle(&ctx, s, knob: knob)
+    }
+
+    private func drawRotationKnob(_ ctx: inout GraphicsContext, from top: CGPoint, knob: CGPoint) {
+        var stem = Path()
+        stem.move(to: top)
+        stem.addLine(to: knob)
+        ctx.stroke(stem, with: .color(accent), lineWidth: 1)
+        let knobRect = CGRect(x: knob.x - 5, y: knob.y - 5, width: 10, height: 10)
+        ctx.fill(Path(ellipseIn: knobRect), with: .color(.white))
+        ctx.stroke(Path(ellipseIn: knobRect), with: .color(accent), lineWidth: 1.5)
+    }
+
+    /// Angle affiché pendant la rotation d'une forme seule.
+    private func drawRotationAngle(_ ctx: inout GraphicsContext, _ s: Shape, knob: CGPoint) {
+        guard case .rotating(_, nil, _, _, _, _) = interaction else { return }
+        let label = Text("\(s.displayAngle, specifier: "%.1f")°").font(.system(size: 11)).foregroundColor(accent)
+        ctx.draw(label, at: CGPoint(x: knob.x + 14, y: knob.y), anchor: .leading)
+    }
+
+    /// Point de rotation de la sélection (cercle barré, comme l'axe de Visio) ; pendant son
+    /// déplacement, position en cours et point d'accrochage entouré en vert.
+    private func drawPivot(_ ctx: inout GraphicsContext) {
+        var world: CGPoint?
+        var custom = false
+        if case .movingPin(let current) = interaction {
+            world = current
+            custom = true
+        } else if let target = store.selectionRotationTarget {
+            world = target.pivot
+            custom = target.hasCustomPivot
+        }
+        guard let world else { return }
+        let p = store.toScreen(world)
+        let r = CGRect(x: p.x - 5, y: p.y - 5, width: 10, height: 10)
+        ctx.fill(Path(ellipseIn: r), with: .color(.white))
+        ctx.stroke(Path(ellipseIn: r), with: .color(custom ? .orange : accent), lineWidth: 1.5)
+        var cross = Path()
+        cross.move(to: CGPoint(x: p.x - 3, y: p.y)); cross.addLine(to: CGPoint(x: p.x + 3, y: p.y))
+        cross.move(to: CGPoint(x: p.x, y: p.y - 3)); cross.addLine(to: CGPoint(x: p.x, y: p.y + 3))
+        ctx.stroke(cross, with: .color(custom ? .orange : accent), lineWidth: 1)
+        if case .movingPin = interaction, let hit = glueCandidate {
+            let q = store.toScreen(hit.point)
+            ctx.stroke(Path(ellipseIn: CGRect(x: q.x - 8, y: q.y - 8, width: 16, height: 16)),
+                       with: .color(.green), lineWidth: 2)
+        }
+        if case .rotating(_, _, _, _, _, let angle) = interaction, store.selectedShapes.count > 1 {
+            // Angle de l'ensemble pendant la rotation, près du point de rotation.
+            let label = Text("\(normalizedAngle(angle), specifier: "%.1f")°").font(.system(size: 11)).foregroundColor(accent)
+            ctx.draw(label, at: CGPoint(x: p.x + 12, y: p.y - 12), anchor: .leading)
         }
     }
 

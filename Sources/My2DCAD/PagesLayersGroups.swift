@@ -178,12 +178,12 @@ extension DocumentStore {
     func groupSelection() {
         guard canGroup else { return }
         let group = UUID()
-        editSelection(key: "group-\(group)", shapes: { $0.groupID = group; $0.groupRotation = 0 })
+        editSelection(key: "group-\(group)", shapes: { $0.groupID = group; $0.groupRotation = 0; $0.groupPin = nil })
     }
 
     /// Dissocier (⇧⌘G).
     func ungroupSelection() {
         guard canUngroup else { return }
-        editSelection(key: "ungroup-\(UUID())", shapes: { $0.groupID = nil; $0.groupRotation = 0 })
+        editSelection(key: "ungroup-\(UUID())", shapes: { $0.groupID = nil; $0.groupRotation = 0; $0.groupPin = nil })
     }
 }
