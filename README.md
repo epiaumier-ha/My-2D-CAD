@@ -6,6 +6,11 @@ Application de dessin 2D inspirée de Microsoft Visio (macOS 14+, Swift 5.9, Swi
 - Xcode : `File > Open…` puis choisir ce dossier (ou `xed .` dans le terminal), schéma **My2DCAD**, puis ⌘R.
 - Tests : ⌘U dans Xcode, ou `swift test`.
 
+## Installer
+- `scripts/package.sh` construit l'application (Release, icône, signée) et ses packages dans `dist/` : `My2DCAD-<version>.dmg` (glisser l'app dans Applications) et `My2DCAD-<version>.pkg` (installeur macOS).
+- `scripts/package.sh --install` l'installe aussi dans `/Applications` (sans mot de passe pour un compte administrateur).
+- Signée avec l'identité « Apple Development » du trousseau : pour ce Mac. Une diffusion à d'autres Mac demande une identité « Developer ID » et la notarisation d'Apple.
+
 ## Fonctions
 - **Bibliothèques de formes** (panneau de gauche, recherche, glisser-déposer ou clic) :
   organigramme (13 formes), réseau (9 icônes), électricité (11 symboles IEC).

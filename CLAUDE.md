@@ -21,6 +21,7 @@ swift build                                   # compilation
 swift test                                    # tous les tests (XCTest)
 swift test --filter RotationPivotTests        # une classe de tests
 swift run My2DCAD                             # lancer l'application
+scripts/package.sh [--install]                # .app Release, .dmg et .pkg dans dist/ (--install : dans /Applications)
 ```
 
 Xcode : ouvrir `Package.swift`, schéma « My2DCAD », ⌘R pour lancer, ⌘U pour les tests.
