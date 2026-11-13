@@ -1,10 +1,43 @@
 import SwiftUI
 
-/// Volet « Format de la forme », comme dans Visio : sections repliables Remplissage, Trait, Texte,
-/// Taille et position. Sans sélection, il présente la page.
+/// Onglets du volet « Format de la forme », comme les icônes du volet de Visio.
+enum FormatTab: String, CaseIterable, Identifiable {
+    case fillLine, text, size
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .fillLine: return "Remplissage et trait"
+        case .text: return "Texte"
+        case .size: return "Taille et propriétés"
+        }
+    }
+
+    var shortTitle: String {
+        switch self {
+        case .fillLine: return "Remplissage"
+        case .text: return "Texte"
+        case .size: return "Taille"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .fillLine: return "paintbrush"
+        case .text: return "textformat"
+        case .size: return "square.resize"
+        }
+    }
+}
+
+/// Volet « Format de la forme », comme dans Visio : trois onglets (Remplissage et trait, Texte,
+/// Taille et propriétés) aux sections repliables. Sans sélection, il présente la page.
 struct InspectorView: View {
     @EnvironmentObject var store: DocumentStore
     @AppStorage(PanelKey.format) private var showFormat = true
+    /// Onglet affiché quand une forme est sélectionnée (mémorisé).
+    @AppStorage("format.tab") private var tabName = FormatTab.fillLine.rawValue
     /// Sections repliées (par titre).
     @State private var collapsed: Set<String> = ["Bloc de texte"]
 
@@ -21,13 +54,26 @@ struct InspectorView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             Divider()
+            if !store.selection.isEmpty {
+                Picker("Onglet", selection: $tabName) {
+                    ForEach(FormatTab.allCases) { t in
+                        Label(t.shortTitle, systemImage: t.symbol).help(t.title).tag(t.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+            }
             Form {
                 if store.selection.isEmpty {
                     shapeTab
                 } else {
-                    styleTab
-                    if !store.selectedShapes.isEmpty { textTab }
-                    shapeTab
+                    switch FormatTab(rawValue: tabName) ?? .fillLine {
+                    case .fillLine: styleTab
+                    case .text: textTab
+                    case .size: shapeTab
+                    }
                 }
             }
             .formStyle(.grouped)
@@ -80,21 +126,7 @@ struct InspectorView: View {
     @ViewBuilder
     private var shapeTab: some View {
         if let s = store.singleSelectedShape {
-            pane("Forme sélectionnée") {
-                LabeledContent("Type", value: s.kind.displayName)
-                if s.kind.isDimension {
-                    LabeledContent("Mesure", value: store.doc.dimensionMeasure(s))
-                    LabeledContent("Collage", value: glueDescription(s))
-                    if !s.glue.isEmpty {
-                        Button("Décoller la cote") { store.unglueSelection() }
-                    }
-                    Text("Le texte saisi remplace la mesure ; laissez-le vide pour la mesure automatique. "
-                         + "Glissez une extrémité sur un coin, un milieu ou le centre d'une forme pour la coller.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            if !store.doc.layers.isEmpty { layerSection }
+            // Ordre de Visio : taille et position, rotation, puis propriétés.
             pane("Taille et position") {
                 field("X", value: s.rect.origin.x) { $0.rect.origin.x = $1 }
                 field("Y", value: s.rect.origin.y) { $0.rect.origin.y = $1 }
@@ -112,6 +144,21 @@ struct InspectorView: View {
                 }
             }
             if let target = store.selectionRotationTarget { rotationSection(target, single: s) }
+            if !store.doc.layers.isEmpty { layerSection }
+            pane("Informations sur la forme") {
+                LabeledContent("Type", value: s.kind.displayName)
+                if s.kind.isDimension {
+                    LabeledContent("Mesure", value: store.doc.dimensionMeasure(s))
+                    LabeledContent("Collage", value: glueDescription(s))
+                    if !s.glue.isEmpty {
+                        Button("Décoller la cote") { store.unglueSelection() }
+                    }
+                    Text("Le texte saisi remplace la mesure ; laissez-le vide pour la mesure automatique. "
+                         + "Glissez une extrémité sur un coin, un milieu ou le centre d'une forme pour la coller.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         } else if store.selection.count == 1, let c = selectedConnectors.first {
             pane("Connecteur") {
                 LabeledContent("De", value: store.shapeLabel(c.fromShape))
@@ -285,6 +332,9 @@ struct InspectorView: View {
         }
         if let style = store.selectionLineStyle {
             lineSection(style)
+        }
+        if fillable.isEmpty && selectedConnectors.isEmpty && store.selectionLineStyle == nil {
+            placeholder("Pas de remplissage ni de trait pour cette sélection (zone de texte).")
         }
     }
 

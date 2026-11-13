@@ -143,8 +143,8 @@ struct GridControls: View {
         let grid = store.doc.grid
         if compact {
             HStack(alignment: .top, spacing: 10) {
+                // L'affichage de la grille se coche dans Affichage > Afficher (comme Visio).
                 VStack(alignment: .leading, spacing: 4) {
-                    visibleToggle(grid).toggleStyle(.checkbox)
                     measurePicker(grid).frame(width: 150)
                     modePicker(grid).frame(width: 150)
                 }

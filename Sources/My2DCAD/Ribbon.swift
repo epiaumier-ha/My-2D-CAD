@@ -164,6 +164,30 @@ struct RibbonMenu<Content: View>: View {
     }
 }
 
+/// Bouton partagé du ruban (Office) : un clic lance l'action principale, la flèche ouvre le menu.
+struct RibbonSplitButton<Content: View>: View {
+    let title: String
+    let symbol: String
+    var help = ""
+    let primary: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        Menu {
+            content()
+        } label: {
+            Label(title, systemImage: symbol).font(.caption)
+        } primaryAction: {
+            primary()
+        }
+        .menuStyle(.borderlessButton)
+        .controlSize(.small)
+        .fixedSize()
+        .frame(height: 22)
+        .help(help.isEmpty ? title : help)
+    }
+}
+
 /// Groupe de commandes, avec son titre en bas et un séparateur à droite.
 struct RibbonGroup<Content: View>: View {
     let title: String
@@ -193,6 +217,8 @@ struct Ribbon: View {
     @AppStorage(PanelKey.format) private var showFormat = true
     @AppStorage(PanelKey.assistant) private var showAssistant = false
     @AppStorage(PanelKey.ribbonCollapsed) private var collapsed = false
+    /// Fenêtre des calques ouverte depuis Accueil > Modification.
+    @State private var showLayers = false
 
     private var tab: RibbonTab { RibbonTab(rawValue: tabName) ?? .home }
 
@@ -341,6 +367,7 @@ struct Ribbon: View {
             .disabled(store.selection.isEmpty)
         }
         RibbonGroup(title: "Police") { fontGroup }
+        RibbonGroup(title: "Paragraphe") { paragraphGroup }
         RibbonGroup(title: "Outils") {
             column {
                 toolButton(.select, title: "Pointeur")
@@ -364,14 +391,12 @@ struct Ribbon: View {
                     store.deleteCommand()
                 }
                 .disabled(store.selection.isEmpty)
-                RibbonMenu(title: "Affecter au calque", symbol: "square.3.layers.3d", help: "Placer la sélection sur un calque") {
-                    Button("Sans calque") { store.assignSelection(toLayer: nil) }
-                    ForEach(store.doc.layers) { l in
-                        Button(l.name) { store.assignSelection(toLayer: l.id) }
+                RibbonSmallButton(title: "Calques", symbol: "square.3.layers.3d",
+                                  help: "Calques de la page : nouveau calque, propriétés (visible, verrouillé, imprimable), affecter la sélection",
+                                  active: showLayers) { showLayers.toggle() }
+                    .popover(isPresented: $showLayers, arrowEdge: .bottom) {
+                        LayersPanel().environmentObject(store)
                     }
-                    Divider()
-                    Button("Nouveau calque") { store.addLayer() }
-                }
             }
         }
     }
@@ -432,12 +457,21 @@ struct Ribbon: View {
                     let v = !ts.italic
                     store.editSelectionTextStyle(key: "italic") { $0.italic = v }
                 }
-                Divider().frame(height: 14).padding(.horizontal, 3)
-                ForEach(TextAlign.allCases) { a in
-                    RibbonSmallButton(title: "Aligner le texte : \(a.label.lowercased())", symbol: a.symbol,
-                                      active: ts.alignment == a, showTitle: false) {
-                        store.editSelectionTextStyle(key: "alignment") { $0.alignment = a }
-                    }
+            }
+        }
+        .disabled(shapes.isEmpty)
+    }
+
+    /// Alignement du texte (groupe Paragraphe de Visio).
+    @ViewBuilder
+    private var paragraphGroup: some View {
+        let shapes = store.selectedShapes
+        let ts = shapes.first?.textStyle ?? TextStyle()
+        HStack(spacing: 1) {
+            ForEach(TextAlign.allCases) { a in
+                RibbonSmallButton(title: "Aligner le texte : \(a.label.lowercased())", symbol: a.symbol,
+                                  active: ts.alignment == a, showTitle: false) {
+                    store.editSelectionTextStyle(key: "alignment") { $0.alignment = a }
                 }
             }
         }
@@ -537,13 +571,16 @@ struct Ribbon: View {
             .disabled(count == 0)
         }
         column {
-            RibbonMenu(title: "Premier plan", symbol: StackingOrder.front.symbol) {
-                Button(StackingOrder.front.label) { store.reorderSelection(.front) }
-                Button(StackingOrder.forward.label) { store.reorderSelection(.forward) }
+            // Comme Visio : un clic avance (ou recule) d'un cran, la flèche propose le premier plan (ou l'arrière-plan).
+            RibbonSplitButton(title: "Avancer", symbol: StackingOrder.forward.symbol, help: "Avancer (⌘]) — la flèche : Mettre au premier plan (⇧⌘])",
+                              primary: { store.reorderSelection(.forward) }) {
+                Button("\(StackingOrder.forward.label) (⌘])") { store.reorderSelection(.forward) }
+                Button("\(StackingOrder.front.label) (⇧⌘])") { store.reorderSelection(.front) }
             }
-            RibbonMenu(title: "Arrière-plan", symbol: StackingOrder.back.symbol) {
-                Button(StackingOrder.back.label) { store.reorderSelection(.back) }
-                Button(StackingOrder.backward.label) { store.reorderSelection(.backward) }
+            RibbonSplitButton(title: "Reculer", symbol: StackingOrder.backward.symbol, help: "Reculer (⌘[) — la flèche : Mettre à l'arrière-plan (⇧⌘[)",
+                              primary: { store.reorderSelection(.backward) }) {
+                Button("\(StackingOrder.backward.label) (⌘[)") { store.reorderSelection(.backward) }
+                Button("\(StackingOrder.back.label) (⇧⌘[)") { store.reorderSelection(.back) }
             }
             Spacer().frame(height: 22)
         }
@@ -569,12 +606,11 @@ struct Ribbon: View {
                 store.chooseBackgroundImage()
             }
         }
+        // Les outils de dessin (trait, courbe, rectangle…) sont dans Accueil > Outils, comme dans Visio.
         RibbonGroup(title: "Parties de diagramme") {
             RibbonLargeButton(title: "Connecteur", symbol: Tool.connector.symbol, help: Tool.connector.labelWithShortcut,
                               active: store.tool == .connector) { store.tool = .connector }
             column {
-                toolButton(.line)
-                toolButton(.curve)
                 RibbonMenu(title: "Cote", symbol: "ruler", help: "Choisir une cote, puis la tracer sur la feuille par cliquer-glisser") {
                     Button("Outil Cote (M) : tracer d'un point à l'autre") { store.tool = .dimension }
                     Divider()
@@ -582,13 +618,7 @@ struct Ribbon: View {
                         Button(item.name) { store.armStencil(item) }
                     }
                 }
-            }
-        }
-        RibbonGroup(title: "Formes") {
-            column {
-                toolButton(.rectangle)
-                toolButton(.ellipse)
-                toolButton(.diamond)
+                Spacer().frame(height: 44)
             }
         }
         RibbonGroup(title: "Texte") {
@@ -649,21 +679,32 @@ struct Ribbon: View {
             .help("Tracé des nouveaux connecteurs")
         }
         BackgroundImageRibbonGroup()
-        RibbonGroup(title: "Calques") {
-            RibbonLargeButton(title: "Nouveau calque", symbol: "square.3.layers.3d") { store.addLayer() }
-            Text(d.layers.isEmpty ? "Aucun calque" : "\(d.layers.count) calque(s)\nGestion : barre des pages")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-        }
     }
 
     // MARK: Onglet Affichage
 
     @ViewBuilder
     private var viewTab: some View {
+        // Comme Visio : Afficher | Aides visuelles | Zoom | Volets ; la grille a son groupe de réglages.
         RibbonGroup(title: "Afficher") {
             VStack(alignment: .leading, spacing: 4) {
                 Toggle("Règles", isOn: $store.showRulers)
+                Toggle("Grille", isOn: Binding(
+                    get: { store.doc.grid.visible },
+                    set: { v in store.updatePageSettings { $0.grid.visible = v } }))
+                HStack(spacing: 2) {
+                    Text("Repères").font(.caption)
+                    Button { store.removeAllGuides() } label: { Image(systemName: "xmark.circle") }
+                        .buttonStyle(.borderless)
+                        .disabled(store.doc.guides.isEmpty)
+                        .help("Supprimer tous les repères (glissez une règle pour en créer)")
+                }
+            }
+            .toggleStyle(.checkbox)
+            .controlSize(.small)
+        }
+        RibbonGroup(title: "Aides visuelles") {
+            VStack(alignment: .leading, spacing: 4) {
                 Toggle("Magnétisme de la grille", isOn: $store.snapEnabled)
                 Toggle("Repères dynamiques", isOn: $store.guidesEnabled)
             }
@@ -673,15 +714,6 @@ struct Ribbon: View {
         RibbonGroup(title: "Grille") {
             GridControls(compact: true)
         }
-        RibbonGroup(title: "Volets") {
-            VStack(alignment: .leading, spacing: 4) {
-                Toggle("Formes", isOn: $showShapes)
-                Toggle("Format de la forme", isOn: $showFormat)
-                Toggle("Assistant", isOn: $showAssistant)
-            }
-            .toggleStyle(.checkbox)
-            .controlSize(.small)
-        }
         RibbonGroup(title: "Zoom") {
             RibbonLargeButton(title: "Ajuster à la fenêtre", symbol: "arrow.up.left.and.arrow.down.right",
                               help: "Ajuster à la fenêtre (⌘9)") { store.fitToContent() }
@@ -690,13 +722,21 @@ struct Ribbon: View {
                 RibbonSmallButton(title: "Zoom arrière", symbol: "minus.magnifyingglass", help: "Zoom arrière (⌘-)") { store.zoom(by: 0.8) }
                 RibbonSmallButton(title: "100 %", symbol: "1.magnifyingglass", help: "Zoom 100 % (⌘0)") { store.setZoom(1) }
             }
-        }
-        RibbonGroup(title: "Repères") {
             column {
-                RibbonSmallButton(title: "Supprimer les repères", symbol: "xmark.circle") { store.removeAllGuides() }
-                    .disabled(store.doc.guides.isEmpty)
-                RibbonSmallButton(title: "Revenir à l'origine", symbol: "scope") { store.resetView() }
+                RibbonSmallButton(title: "Revenir à l'origine", symbol: "scope", help: "Zoom 100 %, origine de la feuille en haut à gauche") {
+                    store.resetView()
+                }
+                Spacer().frame(height: 44)
             }
+        }
+        RibbonGroup(title: "Volets") {
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Formes", isOn: $showShapes)
+                Toggle("Format de la forme", isOn: $showFormat)
+                Toggle("Assistant", isOn: $showAssistant)
+            }
+            .toggleStyle(.checkbox)
+            .controlSize(.small)
         }
     }
 
@@ -741,14 +781,6 @@ struct Ribbon: View {
                 offsetPicker("Formes", selection: $store.offsetSide, help: "Sens du décalage des formes fermées")
                 offsetPicker("Traits", selection: $store.lineOffsetDirection,
                              help: "Côté de la parallèle pour les traits et courbes (vu sur la page)")
-            }
-        }
-        RibbonGroup(title: "Regroupement") {
-            column {
-                RibbonSmallButton(title: "Grouper", symbol: "square.on.square.dashed", help: "Grouper (⌘G)") { store.groupSelection() }
-                    .disabled(!store.canGroup)
-                RibbonSmallButton(title: "Dissocier", symbol: "square.dashed", help: "Dissocier (⇧⌘G)") { store.ungroupSelection() }
-                    .disabled(!store.canUngroup)
             }
         }
         RibbonGroup(title: "Comportement") {

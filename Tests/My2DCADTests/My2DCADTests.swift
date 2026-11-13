@@ -3112,3 +3112,13 @@ final class OffsetDirectionTests: XCTestCase {
         XCTAssertTrue(tools.run("shape_operation", ["ids": ["Pièce"], "operation": "offset", "offset_side": "dedans"]).isError)
     }
 }
+
+// MARK: - Volet Format : onglets
+
+final class FormatTabTests: XCTestCase {
+    func testTabsFollowVisioOrderAndFallBack() {
+        XCTAssertEqual(FormatTab.allCases.map(\.title), ["Remplissage et trait", "Texte", "Taille et propriétés"])
+        XCTAssertNil(FormatTab(rawValue: "ancien"), "valeur mémorisée inconnue : l'onglet par défaut est utilisé")
+        XCTAssertEqual(Set(FormatTab.allCases.map(\.rawValue)).count, 3)
+    }
+}

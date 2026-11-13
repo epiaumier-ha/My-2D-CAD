@@ -192,6 +192,9 @@ struct My2DCADApp: App {
                 }
                 Divider()
                 Button("Dessin SVG…") { store.importSVG() }.keyboardShortcut("i", modifiers: [.command, .shift])
+                Button(store.hasBackgroundImage ? "Remplacer l'image d'arrière-plan…" : "Image d'arrière-plan…") {
+                    store.chooseBackgroundImage()
+                }
             }
             CommandMenu("Forme") {
                 Menu("Aligner") {
@@ -240,6 +243,9 @@ struct My2DCADApp: App {
                     .disabled(!store.selectionHasGlue)
                 Button("Inverser le sens du connecteur") { store.reverseSelectedConnectors() }
                     .disabled(store.selection.isEmpty)
+                Toggle("Points de connexion aux sommets", isOn: Binding(
+                    get: { store.selectionHasVertexPorts }, set: { store.setVertexPorts($0) }))
+                    .disabled(store.vertexPortCandidates.isEmpty)
             }
             CommandMenu("Outils") {
                 // ⌘1 à ⌘8 pour les huit premiers outils (⌘9 : ajuster à la fenêtre) ;
