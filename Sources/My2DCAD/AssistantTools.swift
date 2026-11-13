@@ -130,7 +130,11 @@ struct AssistantToolbox {
             AssistantToolbox.tool("shape_operation", "Opération sur les formes, comme dans Visio. L'ordre des identifiants compte : la première forme donne son format et sert de base à subtract.",
                  AssistantToolbox.object(["ids": ids,
                          "operation": ["type": "string", "enum": .array(ShapeOperation.allCases.map { .string($0.rawValue) })],
-                         "offset_distance": ["type": "number", "description": "Distance pour offset"]],
+                         "offset_distance": ["type": "number", "description": "Distance pour offset"],
+                         "offset_side": ["type": "string", "enum": .array(OffsetSide.allCases.map { .string($0.rawValue) }),
+                                         "description": "offset d'une forme fermée : both, outside, inside"],
+                         "line_direction": ["type": "string", "enum": .array(LineOffsetDirection.allCases.map { .string($0.rawValue) }),
+                                            "description": "offset d'un trait : both (deux parallèles) ou côté up, down, left, right"]],
                         required: ["ids", "operation"])),
             AssistantToolbox.tool("set_page", "Change la feuille (format, orientation), l'unité, l'échelle (1:N, donner N) ou la précision d'affichage de la page.",
                  AssistantToolbox.object(["unit": ["type": "string", "enum": .array(MeasureUnit.allCases.map { .string($0.rawValue) })],
@@ -540,6 +544,16 @@ struct AssistantToolbox {
         if let distance = try length(input["offset_distance"], "offset_distance") {
             guard distance > 0 else { throw AssistantToolError("Distance positive attendue") }
             store.offsetDistance = distance
+        }
+        if let v = input["offset_side"] {
+            guard let side = v.string.flatMap(OffsetSide.init(rawValue:)) else { throw AssistantToolError("Sens de décalage inconnu") }
+            store.offsetSide = side
+        }
+        if let v = input["line_direction"] {
+            guard let dir = v.string.flatMap(LineOffsetDirection.init(rawValue:)) else {
+                throw AssistantToolError("Direction de décalage inconnue")
+            }
+            store.lineOffsetDirection = dir
         }
         store.selection = []
         for id in ids { store.selection.insert(id) }

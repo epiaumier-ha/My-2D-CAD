@@ -123,6 +123,14 @@ final class DocumentStore: ObservableObject {
     private(set) var selectionOrder: [UUID] = []
     /// Distance du décalage (opération « Décalage »), en unités monde : 5 mm par défaut.
     @Published var offsetDistance: CGFloat = 5 * 72 / 25.4
+    /// Sens du décalage des formes fermées et direction du décalage des traits (mémorisés).
+    @Published var offsetSide: OffsetSide = OffsetSide(rawValue: UserDefaults.standard.string(forKey: "offset.side") ?? "") ?? .both {
+        didSet { UserDefaults.standard.set(offsetSide.rawValue, forKey: "offset.side") }
+    }
+    @Published var lineOffsetDirection: LineOffsetDirection =
+        LineOffsetDirection(rawValue: UserDefaults.standard.string(forKey: "offset.lineDirection") ?? "") ?? .both {
+        didSet { UserDefaults.standard.set(lineOffsetDirection.rawValue, forKey: "offset.lineDirection") }
+    }
     @Published var tool: Tool = .select {
         didSet {
             if tool.isDrawingTool { lastDrawingTool = tool }

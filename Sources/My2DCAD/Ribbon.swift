@@ -302,6 +302,20 @@ struct Ribbon: View {
         .help(help)
     }
 
+    /// Menu compact du sens ou de la direction du décalage.
+    private func offsetPicker<T: CaseIterable & Identifiable & Hashable>(_ title: String, selection: Binding<T>,
+                                                                          help: String) -> some View
+    where T.AllCases: RandomAccessCollection, T: OffsetChoice {
+        Picker(selection: selection) {
+            ForEach(T.allCases) { Label($0.label, systemImage: $0.symbol).tag($0) }
+        } label: {
+            Text(title).font(.caption)
+        }
+        .controlSize(.small)
+        .frame(width: 175)
+        .help(help)
+    }
+
     private func column<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 1) { content() }
     }
@@ -722,6 +736,11 @@ struct Ribbon: View {
                     .help("Distance du décalage")
                 Text(d.unit.symbol).font(.caption).foregroundStyle(.secondary)
                 }
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                offsetPicker("Formes", selection: $store.offsetSide, help: "Sens du décalage des formes fermées")
+                offsetPicker("Traits", selection: $store.lineOffsetDirection,
+                             help: "Côté de la parallèle pour les traits et courbes (vu sur la page)")
             }
         }
         RibbonGroup(title: "Regroupement") {

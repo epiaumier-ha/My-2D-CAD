@@ -50,7 +50,7 @@ enum ShapeOperation: String, CaseIterable, Identifiable {
         case .subtract: return "Retire les autres formes de la première sélectionnée"
         case .join: return "Assemble les traits bout à bout en une seule forme"
         case .trim: return "Coupe les tracés à chaque intersection"
-        case .offset: return "Ajoute des contours parallèles à la distance choisie (l'original est gardé)"
+        case .offset: return "Ajoute des contours parallèles à la distance choisie, du côté choisi pour les formes et les traits (l'original est gardé)"
         case .fitCurve: return "Remplace les segments par des courbes lissées"
         }
     }
@@ -512,15 +512,15 @@ extension DocumentStore {
             guard results.count <= 2_000 else { throw ShapeOperationError.tooComplex }
 
         case .offset:
+            // Formes fermées : vers l'extérieur, l'intérieur ou les deux ; traits : côté choisi ou deux parallèles.
             let d = max(offsetDistance, 0.01)
             consumed = []
             for s in shapes {
-                guard let g = s.worldGeometry else { continue }
-                let band = g.cgPath.copy(strokingWithWidth: 2 * d, lineCap: .butt, lineJoin: .miter, miterLimit: 4)
-                    .normalized()
-                guard !band.isEmpty else { continue }
-                results.append(try makeResult(band, like: s, region: false, keepText: false, closedOutline: true))
+                guard let path = try OffsetGeometry.offset(s, distance: d, side: offsetSide,
+                                                           direction: lineOffsetDirection) else { continue }
+                results.append(try makeResult(path, like: s, region: false, keepText: false, closedOutline: true))
             }
+            if results.isEmpty && offsetSide == .inside { throw OffsetError.insideTooLarge }
 
         case .fitCurve:
             let tolerance: CGFloat = 1.5

@@ -60,6 +60,7 @@ Xcode : ouvrir `Package.swift`, schéma « My2DCAD », ⌘R pour lancer, ⌘U po
 | `Dimensions.swift` | cotes (linéaires, angulaires, rayon, diamètre) et collage aux formes |
 | `Arrange.swift` | copier-coller, alignement, ordre de superposition commun aux formes et connecteurs (`stackOrder`, `Connector.afterShape`) |
 | `ShapeOperations.swift` | Union, Combiner, Fragmenter, Intersection, Soustraire, Joindre, Rogner, Décalage, Ajuster la courbe |
+| `Offset.swift` | Décalage : sens des formes fermées (extérieur, intérieur, les deux), côté des traits (au-dessus, en dessous, à gauche, à droite, deux parallèles), angles vifs |
 | `Paths.swift` | traits, courbes, longueur des tracés |
 | `BackgroundImage*.swift` | image d'arrière-plan de la page (incorporée, PNG/JPEG) : rognage, rotation, miroir, transparence, étalonnage, verrouillage |
 | `ConnectionPoints.swift` | points de connexion aux sommets (option par forme, indices 4 et plus) |

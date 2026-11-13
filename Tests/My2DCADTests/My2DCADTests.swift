@@ -1332,6 +1332,7 @@ final class ShapeOperationTests: XCTestCase {
     func testOffsetKeepsOriginal() throws {
         let s = store([rect(0, 0, 100, 100)])
         s.offsetDistance = 10
+        s.offsetSide = .both
         try s.applyOperation(.offset)
         XCTAssertEqual(s.doc.shapes.count, 2)
         let o = s.doc.shapes[1]
@@ -2945,5 +2946,169 @@ final class ConnectorStackingTests: XCTestCase {
         d.connectors[0].afterShape = UUID()
         XCTAssertNoThrow(try DiagramIO.validate(d))
         if case .connector = d.stackOrder.first {} else { XCTFail("connecteur en dessous") }
+    }
+}
+
+// MARK: - Décalage : sens et direction
+
+@MainActor
+final class OffsetDirectionTests: XCTestCase {
+    private func store(_ shape: Shape, side: OffsetSide = .both, direction: LineOffsetDirection = .both) -> DocumentStore {
+        let store = DocumentStore()
+        store.perform { $0.shapes = [shape] }
+        store.selection = [shape.id]
+        store.offsetDistance = 10
+        store.offsetSide = side
+        store.lineOffsetDirection = direction
+        return store
+    }
+
+    private func line(_ a: CGPoint, _ b: CGPoint) -> Shape {
+        var s = Shape(kind: .line, rect: .zero)
+        s.setWorldPoints([a, b])
+        return s
+    }
+
+    /// Sous-tracés du résultat (coordonnées monde).
+    private func resultContours(_ store: DocumentStore) throws -> [Contour] {
+        XCTAssertEqual(store.doc.shapes.count, 2, "l'original est gardé")
+        let r = try XCTUnwrap(store.doc.shapes.last)
+        return contours(of: r.paths(in: r.rect).fill)
+    }
+
+    private func assertClose(_ a: CGPoint, _ b: CGPoint, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(a.x, b.x, accuracy: 0.01, file: file, line: line)
+        XCTAssertEqual(a.y, b.y, accuracy: 0.01, file: file, line: line)
+    }
+
+    private func bounds(_ c: [Contour]) -> CGRect {
+        BackgroundImage.boundingBox(c.flatMap(\.polyline))
+    }
+
+    func testClosedShapeOutsideOrInside() throws {
+        let square = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 100, height: 100))
+        let outside = store(square, side: .outside)
+        try outside.applyOperation(.offset)
+        var c = try resultContours(outside)
+        XCTAssertEqual(c.count, 1)
+        XCTAssertEqual(bounds(c), CGRect(x: -10, y: -10, width: 120, height: 120))
+        XCTAssertTrue(c[0].polyline.contains { $0.distance(to: CGPoint(x: -10, y: -10)) < 0.01 }, "angle vif")
+        let inside = store(square, side: .inside)
+        try inside.applyOperation(.offset)
+        c = try resultContours(inside)
+        XCTAssertEqual(c.count, 1)
+        XCTAssertEqual(bounds(c), CGRect(x: 10, y: 10, width: 80, height: 80))
+        XCTAssertTrue(inside.doc.shapes[1].noFill)
+        inside.undo()
+        XCTAssertEqual(inside.doc.shapes.count, 1, "une seule étape d'annulation")
+    }
+
+    func testRotatedEllipseInside() throws {
+        var e = Shape(kind: .ellipse, rect: CGRect(x: 0, y: 0, width: 100, height: 100))
+        e.rotation = 30
+        let s = store(e, side: .inside)
+        try s.applyOperation(.offset)
+        let b = bounds(try resultContours(s))
+        XCTAssertEqual(b.width, 80, accuracy: 0.5)
+        XCTAssertEqual(b.midX, 50, accuracy: 0.5)
+    }
+
+    func testInsideTooLargeIsReported() {
+        let s = store(Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 40, height: 40)), side: .inside)
+        s.offsetDistance = 30
+        XCTAssertThrowsError(try s.applyOperation(.offset)) { XCTAssertEqual($0 as? OffsetError, .insideTooLarge) }
+        XCTAssertEqual(s.doc.shapes.count, 1)
+        XCTAssertEqual(s.undoStack.count, 1, "aucune étape ajoutée (seule la création de la forme)")
+    }
+
+    func testHorizontalLineAboveBelowOrBoth() throws {
+        // Tracé de droite à gauche : « au-dessus » ne dépend pas du sens du trait.
+        for (a, b) in [(CGPoint(x: 0, y: 50), CGPoint(x: 100, y: 50)), (CGPoint(x: 100, y: 50), CGPoint(x: 0, y: 50))] {
+            let up = store(line(a, b), direction: .up)
+            try up.applyOperation(.offset)
+            var c = try resultContours(up)
+            XCTAssertEqual(c.count, 1)
+            XCTAssertFalse(c[0].closed, "une parallèle ouverte")
+            XCTAssertEqual(bounds(c), CGRect(x: 0, y: 40, width: 100, height: 0))
+            let down = store(line(a, b), direction: .down)
+            try down.applyOperation(.offset)
+            c = try resultContours(down)
+            XCTAssertEqual(bounds(c).minY, 60, accuracy: 1e-6)
+        }
+        let both = store(line(CGPoint(x: 0, y: 50), CGPoint(x: 100, y: 50)), direction: .both)
+        try both.applyOperation(.offset)
+        let c = try resultContours(both)
+        XCTAssertEqual(c.count, 2, "deux parallèles, comme Visio")
+        XCTAssertTrue(c.allSatisfy { !$0.closed })
+        XCTAssertEqual(Set(c.map { $0.start.y }), [40, 60])
+    }
+
+    func testDirectionParallelToLineIsRefused() {
+        let s = store(line(CGPoint(x: 0, y: 50), CGPoint(x: 100, y: 50)), direction: .left)
+        XCTAssertThrowsError(try s.applyOperation(.offset)) {
+            XCTAssertEqual($0 as? OffsetError, .parallelToDirection(.left))
+            XCTAssertTrue($0.localizedDescription.contains("Au-dessus"))
+        }
+        XCTAssertEqual(s.doc.shapes.count, 1)
+        let v = store(line(CGPoint(x: 50, y: 0), CGPoint(x: 50, y: 100)), direction: .up)
+        XCTAssertThrowsError(try v.applyOperation(.offset))
+    }
+
+    func testVerticalAndObliqueLines() throws {
+        let v = store(line(CGPoint(x: 50, y: 0), CGPoint(x: 50, y: 100)), direction: .right)
+        try v.applyOperation(.offset)
+        XCTAssertEqual(bounds(try resultContours(v)).minX, 60, accuracy: 1e-6)
+        // Trait oblique : « à gauche » et « au-dessus » désignent le même côté.
+        let k = 10 / CGFloat(2).squareRoot()
+        for dir in [LineOffsetDirection.left, .down] {
+            let o = store(line(CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 100)), direction: dir)
+            try o.applyOperation(.offset)
+            let start = try XCTUnwrap(resultContours(o).first?.start)
+            let candidates = [CGPoint(x: -k, y: k), CGPoint(x: 100 - k, y: 100 + k)]
+            XCTAssertTrue(candidates.contains { $0.distance(to: start) < 0.01 }, "\(dir) : \(start)")
+        }
+    }
+
+    func testPolylineCornersStaySharp() {
+        let q = OffsetGeometry.offsetPolyline([CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0), CGPoint(x: 100, y: 100)], by: 10)
+        XCTAssertEqual(q.count, 3)
+        assertClose(q[0], CGPoint(x: 0, y: -10))
+        assertClose(q[1], CGPoint(x: 110, y: -10))
+        assertClose(q[2], CGPoint(x: 110, y: 100))
+        // Demi-tour : pointe coupée (deux points) plutôt qu'une pointe infinie.
+        let back = OffsetGeometry.offsetPolyline([CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0), CGPoint(x: 0, y: 1)], by: 10)
+        XCTAssertEqual(back.count, 4)
+        XCTAssertTrue(back.allSatisfy { abs($0.x) < 200 && abs($0.y) < 200 })
+    }
+
+    func testCurveAndOpenFreeformAreTreatedAsLines() throws {
+        var curve = Shape(kind: .curve, rect: .zero)
+        curve.setWorldPoints([CGPoint(x: 0, y: 100), CGPoint(x: 50, y: 0), CGPoint(x: 100, y: 100)])
+        let s = store(curve, direction: .up)
+        try s.applyOperation(.offset)
+        let c = try resultContours(s)
+        XCTAssertEqual(c.count, 1)
+        XCTAssertFalse(c[0].closed)
+        var path = Path()
+        path.addLines([CGPoint(x: 0, y: 0), CGPoint(x: 50, y: 0), CGPoint(x: 50, y: 50)])
+        let poly = try XCTUnwrap(Shape.freeform(from: path))
+        let f = store(poly, direction: .both)
+        try f.applyOperation(.offset)
+        XCTAssertEqual(try resultContours(f).count, 2)
+        XCTAssertNoThrow(try DiagramIO.validate(f.doc))
+    }
+
+    func testAssistantChoosesSideAndDirection() throws {
+        let store = DocumentStore()
+        let tools = AssistantToolbox(store: store)
+        XCTAssertFalse(tools.run("add_shapes", ["shapes": [["type": "rectangle", "x": 0, "y": 0, "width": 100, "height": 100,
+                                                             "text": "Pièce"]]]).isError)
+        let out = tools.run("shape_operation", ["ids": ["Pièce"], "operation": "offset", "offset_side": "inside",
+                                                "line_direction": "up"])
+        XCTAssertFalse(out.isError, out.result)
+        XCTAssertEqual(store.offsetSide, .inside)
+        XCTAssertEqual(store.lineOffsetDirection, .up)
+        XCTAssertEqual(store.doc.shapes.count, 2)
+        XCTAssertTrue(tools.run("shape_operation", ["ids": ["Pièce"], "operation": "offset", "offset_side": "dedans"]).isError)
     }
 }
