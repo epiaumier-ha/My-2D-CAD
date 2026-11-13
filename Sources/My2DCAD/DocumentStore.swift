@@ -92,7 +92,9 @@ final class DocumentStore: ObservableObject {
     // Document (pages) et sélection
     @Published var document = CADDocument()
     /// Index de la page affichée.
-    @Published private(set) var currentPage = 0
+    @Published private(set) var currentPage = 0 {
+        didSet { if currentPage != oldValue && autoFitPage { fitPage() } }
+    }
 
     /// Page affichée : toutes les opérations d'édition portent sur elle.
     var doc: Diagram {
@@ -123,8 +125,16 @@ final class DocumentStore: ObservableObject {
     @Published var editingText = ""
 
     // Vue : écran = monde * zoom + offset
-    @Published var zoom: CGFloat = 1
-    @Published var offset = CGSize(width: 40, height: 40)
+    @Published var zoom: CGFloat = 1 {
+        didSet { if !applyingAutoFit { autoFitPage = false } }
+    }
+    @Published var offset = CGSize(width: 40, height: 40) {
+        didSet { if !applyingAutoFit { autoFitPage = false } }
+    }
+    /// Comme Visio à l'ouverture : la page entière est centrée dans la zone de dessin et le reste
+    /// quand la fenêtre ou les volets changent de taille, jusqu'au premier zoom ou déplacement.
+    private(set) var autoFitPage = true
+    private var applyingAutoFit = false
     @Published var snapEnabled = true
     /// Repères d'alignement dynamiques pendant le déplacement et le dessin.
     @Published var guidesEnabled = true
@@ -155,7 +165,9 @@ final class DocumentStore: ObservableObject {
     private var coalesceKey: String?
 
     // État non publié
-    var canvasSize = CGSize(width: 800, height: 600)
+    var canvasSize = CGSize(width: 800, height: 600) {
+        didSet { if autoFitPage { fitPage() } }
+    }
     var hover: CGPoint?
     var mouseInCanvas = false
     /// Nombre de collages successifs depuis la dernière copie (décalage en escalier).
@@ -459,13 +471,31 @@ final class DocumentStore: ObservableObject {
     func fitToContent() {
         // Comme « Ajuster à la fenêtre » de Visio : toute la feuille, et le dessin qui en dépasse.
         let bounds = doc.shapes.filter { doc.isVisible($0) }.reduce(doc.sheetRect) { $0.union($1.bounds) }
+        fitView(to: bounds)
+    }
+
+    /// Page entière centrée dans la zone de dessin (démarrage, nouveau document). Reste ajustée
+    /// aux changements de taille de la fenêtre, des volets ou de la feuille jusqu'au premier
+    /// zoom ou déplacement de l'utilisateur.
+    func fitPage() {
+        applyingAutoFit = true
+        defer { applyingAutoFit = false }
+        autoFitPage = true
+        fitView(to: doc.sheetRect)
+    }
+
+    private func fitView(to bounds: CGRect) {
+        // Zone de dessin pas encore mesurée (fenêtre en cours d'ouverture) : rien à centrer.
+        guard canvasSize.width > 1, canvasSize.height > 1, bounds.width.isFinite, bounds.height.isFinite else { return }
         let pad: CGFloat = 40
         let availW = max(canvasSize.width - 2 * pad, 50)
         let availH = max(canvasSize.height - 2 * pad, 50)
         let z = min(min(availW / max(bounds.width, 1), availH / max(bounds.height, 1)), 2)
-        zoom = max(z, 0.1)
-        offset = CGSize(width: canvasSize.width / 2 - bounds.midX * zoom,
-                        height: canvasSize.height / 2 - bounds.midY * zoom)
+        let newZoom = max(z, 0.1)
+        let newOffset = CGSize(width: canvasSize.width / 2 - bounds.midX * newZoom,
+                               height: canvasSize.height / 2 - bounds.midY * newZoom)
+        if zoom != newZoom { zoom = newZoom }
+        if offset != newOffset { offset = newOffset }
     }
 
     // MARK: Fichiers
@@ -530,7 +560,7 @@ final class DocumentStore: ObservableObject {
         fileURL = url
         isDirty = false
         tool = .select
-        if url == nil { resetView() }
+        if url == nil { fitPage() }
     }
 
     /// Retourne true si on peut poursuivre (rien à sauver, enregistré, ou abandon accepté).

@@ -1797,3 +1797,49 @@ final class NumericFieldTests: XCTestCase {
         XCTAssertEqual(NumericField.parse(NumericField.format(1000, fractionDigits: 0)), 1000, "sans séparateur de milliers")
     }
 }
+
+@MainActor
+final class PageCenteringTests: XCTestCase {
+    func testPageIsCentredWhenTheDrawingAreaIsFirstMeasured() {
+        let store = DocumentStore()
+        store.canvasSize = CGSize(width: 1000, height: 700)   // apparition de la zone de dessin
+        let sheet = store.doc.sheetRect
+        let centre = store.toWorld(CGPoint(x: 500, y: 350))
+        XCTAssertEqual(centre.x, sheet.midX, accuracy: 1e-6)
+        XCTAssertEqual(centre.y, sheet.midY, accuracy: 1e-6)
+        // Toute la feuille est visible, avec une marge.
+        let topLeft = store.toWorld(.zero), bottomRight = store.toWorld(CGPoint(x: 1000, y: 700))
+        XCTAssertLessThan(topLeft.x, sheet.minX)
+        XCTAssertLessThan(topLeft.y, sheet.minY)
+        XCTAssertGreaterThan(bottomRight.x, sheet.maxX)
+        XCTAssertGreaterThan(bottomRight.y, sheet.maxY)
+    }
+
+    func testPageStaysCentredWhilePanesResizeUntilTheUserMovesTheView() {
+        let store = DocumentStore()
+        store.canvasSize = CGSize(width: 1000, height: 700)
+        store.canvasSize = CGSize(width: 700, height: 700)    // volet ouvert
+        var centre = store.toWorld(CGPoint(x: 350, y: 350))
+        XCTAssertEqual(centre.x, store.doc.sheetRect.midX, accuracy: 1e-6)
+
+        store.zoom(by: 1.25)                                   // l'utilisateur zoome : la vue lui appartient
+        let zoom = store.zoom, offset = store.offset
+        store.canvasSize = CGSize(width: 900, height: 700)
+        XCTAssertEqual(store.zoom, zoom)
+        XCTAssertEqual(store.offset, offset)
+
+        store.fitPage()                                        // nouveau document : à nouveau centré
+        centre = store.toWorld(CGPoint(x: 450, y: 350))
+        XCTAssertEqual(centre.x, store.doc.sheetRect.midX, accuracy: 1e-6)
+        XCTAssertEqual(centre.y, store.doc.sheetRect.midY, accuracy: 1e-6)
+    }
+
+    func testChangingThePaperKeepsThePageCentred() {
+        let store = DocumentStore()
+        store.canvasSize = CGSize(width: 1000, height: 700)
+        store.updatePageSettings { $0.pageSetup.orientation = $0.pageSetup.orientation == .portrait ? .landscape : .portrait }
+        let centre = store.toWorld(CGPoint(x: 500, y: 350))
+        XCTAssertEqual(centre.x, store.doc.sheetRect.midX, accuracy: 1e-6)
+        XCTAssertEqual(centre.y, store.doc.sheetRect.midY, accuracy: 1e-6)
+    }
+}

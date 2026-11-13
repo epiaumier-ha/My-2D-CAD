@@ -164,6 +164,8 @@ extension DocumentStore {
         }
         let result = d
         perform { $0 = result }
+        // Vue encore ajustée sur la page : elle suit le nouveau format de feuille.
+        if autoFitPage, result.sheetRect != before.sheetRect { fitPage() }
     }
 }
 
