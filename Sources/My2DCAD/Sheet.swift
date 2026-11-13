@@ -201,12 +201,10 @@ struct SheetControls: View {
 
     private func sideField(_ title: String, value: Double,
                            apply: @escaping (inout Diagram, Double) -> Void) -> some View {
-        TextField(title, value: Binding<Double>(
-            get: { value },
-            set: { v in
-                guard v.isFinite, PageSetup.sideRange.contains(v) else { return }
-                store.updatePageSettings { apply(&$0, v) }
-            }), format: .number.precision(.fractionLength(0...1)))
+        NumericField(title: title, value: value, fractionDigits: 1, context: store.doc.id,
+                     isValid: { PageSetup.sideRange.contains($0) }) { v in
+            store.updatePageSettings { apply(&$0, v) }
+        }
             .textFieldStyle(.roundedBorder)
             .multilineTextAlignment(.trailing)
             .labelsHidden()

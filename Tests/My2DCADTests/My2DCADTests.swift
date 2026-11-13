@@ -1767,3 +1767,33 @@ final class ScaleChangeTests: XCTestCase {
         XCTAssertEqual(store.doc.shapes[0].rect.width, 5_000_000)
     }
 }
+
+final class NumericFieldTests: XCTestCase {
+    func testParsingAcceptsCommaDotAndSpaces() {
+        XCTAssertEqual(NumericField.parse("50"), 50)
+        XCTAssertEqual(NumericField.parse("2,5"), 2.5)
+        XCTAssertEqual(NumericField.parse("2.5"), 2.5)
+        XCTAssertEqual(NumericField.parse(" 1 000 "), 1000)
+        XCTAssertEqual(NumericField.parse("1\u{202F}000,25"), 1000.25)
+        XCTAssertEqual(NumericField.parse("\u{2212}3"), -3)
+    }
+
+    func testEmptyOrInvalidInputIsRejected() {
+        // Champ vidé (dernier chiffre effacé) : pas de valeur, la saisie n'est pas appliquée.
+        XCTAssertNil(NumericField.parse(""))
+        XCTAssertNil(NumericField.parse("   "))
+        XCTAssertNil(NumericField.parse("abc"))
+        XCTAssertNil(NumericField.parse("1:50"))
+        XCTAssertNil(NumericField.parse("nan"))
+        XCTAssertNil(NumericField.parse("inf"))
+        XCTAssertNil(NumericField.parse("1e400"))
+    }
+
+    func testFormattedValuesReadBack() {
+        for v in [1.0, 50, 100, 1000, 2.5, 0.125, 12345.6789] {
+            let text = NumericField.format(v, fractionDigits: 4)
+            XCTAssertEqual(NumericField.parse(text) ?? .nan, v, accuracy: 1e-9, text)
+        }
+        XCTAssertEqual(NumericField.parse(NumericField.format(1000, fractionDigits: 0)), 1000, "sans séparateur de milliers")
+    }
+}

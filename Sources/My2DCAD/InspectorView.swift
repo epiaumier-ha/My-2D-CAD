@@ -104,13 +104,9 @@ struct InspectorView: View {
                 if !s.kind.isPath {
                     field("Largeur", value: s.rect.width, minValue: 1) { $0.rect.size.width = $1 }
                     field("Hauteur", value: s.rect.height, minValue: 1) { $0.rect.size.height = $1 }
-                    TextField("Rotation (°)", value: Binding<Double>(
-                        get: { s.rotation },
-                        set: { v in
-                            guard v.isFinite else { return }
-                            store.editSelectedShape(key: "rotation") { $0.rotation = normalizedAngle(v) }
-                        }),
-                              format: .number.precision(.fractionLength(0...1)))
+                    NumericField(title: "Rotation (°)", value: s.rotation, fractionDigits: 1, context: s.id) { v in
+                        store.editSelectedShape(key: "rotation") { $0.rotation = normalizedAngle(v) }
+                    }
                 }
             }
         } else if store.selection.count == 1, let c = selectedConnectors.first {
@@ -178,11 +174,12 @@ struct InspectorView: View {
             LabeledContent("Échelle") {
                 HStack(spacing: 4) {
                     Text("1 :")
-                    TextField("Échelle", value: Binding(
-                        get: { d.scale },
-                        set: { v in store.updatePageSettings { $0.scale = v } }),
-                              format: .number.precision(.fractionLength(0...3)))
+                    NumericField(title: "Échelle", value: d.scale, fractionDigits: 4, context: d.id,
+                                 isValid: { Diagram.scaleRange.contains($0) }) { v in
+                        store.updatePageSettings { $0.scale = v }
+                    }
                         .labelsHidden()
+                        .help("Échelle du dessin 1:N — tapez N puis Entrée (1:100 : 1 cm sur la feuille = 1 m réel)")
                         .multilineTextAlignment(.trailing)
                         .frame(width: 80)
                 }
@@ -386,14 +383,13 @@ struct InspectorView: View {
                         store.editSelectedShape(key: "textWidthAuto") { $0.textBlockWidth = auto ? nil : current }
                     }))
                 if s.textBlockWidth != nil {
-                    TextField("Largeur (\(d.unit.symbol))", value: Binding<Double>(
-                        get: { d.measure(s.textBlockWidthValue) },
-                        set: { v in
-                            let world = Double(d.worldLength(forMeasure: v))
-                            guard world.isFinite else { return }
-                            let clamped = min(max(world, Shape.textBlockWidthRange.lowerBound), Shape.textBlockWidthRange.upperBound)
-                            store.editSelectedShape(key: "textWidth") { $0.textBlockWidth = clamped }
-                        }), format: .number.precision(.fractionLength(0...max(d.precision, 1))))
+                    NumericField(title: "Largeur (\(d.unit.symbol))", value: Double(d.measure(s.textBlockWidthValue)),
+                                 fractionDigits: max(d.precision, 1), context: s.id,
+                                 isValid: { Double(d.worldLength(forMeasure: $0)).isFinite }) { v in
+                        let world = Double(d.worldLength(forMeasure: v))
+                        let clamped = min(max(world, Shape.textBlockWidthRange.lowerBound), Shape.textBlockWidthRange.upperBound)
+                        store.editSelectedShape(key: "textWidth") { $0.textBlockWidth = clamped }
+                    }
                 }
             }
             Button("Rétablir la position du texte") { store.resetTextBlocks() }
@@ -406,13 +402,14 @@ struct InspectorView: View {
 
     private func offsetField(_ label: String, value: CGFloat, apply: @escaping (inout Shape, CGFloat) -> Void) -> some View {
         let d = store.doc
-        return TextField("\(label) (\(d.unit.symbol))", value: Binding<Double>(
-            get: { d.measure(value) },
-            set: { v in
-                let world = d.worldLength(forMeasure: v)
-                guard world.isFinite, abs(world) <= DiagramIO.maxCoordinate / 2 else { return }
-                store.editSelectedShape(key: label) { apply(&$0, world) }
-            }), format: .number.precision(.fractionLength(0...max(d.precision, 1))))
+        return NumericField(title: "\(label) (\(d.unit.symbol))", value: Double(d.measure(value)),
+                            fractionDigits: max(d.precision, 1), context: store.selection,
+                            isValid: { v in
+                                let world = d.worldLength(forMeasure: v)
+                                return world.isFinite && abs(world) <= DiagramIO.maxCoordinate / 2
+                            }) { v in
+            store.editSelectedShape(key: label) { apply(&$0, d.worldLength(forMeasure: v)) }
+        }
     }
 
     // MARK: - Composants
@@ -440,15 +437,11 @@ struct InspectorView: View {
     private func field(_ label: String, value: CGFloat, minValue: CGFloat = -1_000_000,
                        apply: @escaping (inout Shape, CGFloat) -> Void) -> some View {
         let d = store.doc
-        return TextField("\(label) (\(d.unit.symbol))", value: Binding<Double>(
-            get: { d.measure(value) },
-            set: { newValue in
-                guard newValue.isFinite else { return }
-                let world = d.worldLength(forMeasure: newValue)
-                guard world.isFinite else { return }
-                let v = min(max(world, minValue), 1_000_000)
-                store.editSelectedShape(key: label) { apply(&$0, v) }
-            }),
-                  format: .number.precision(.fractionLength(0...max(d.precision, 1))))
+        return NumericField(title: "\(label) (\(d.unit.symbol))", value: Double(d.measure(value)),
+                            fractionDigits: max(d.precision, 1), context: store.selection,
+                            isValid: { d.worldLength(forMeasure: $0).isFinite }) { newValue in
+            let v = min(max(d.worldLength(forMeasure: newValue), minValue), 1_000_000)
+            store.editSelectedShape(key: label) { apply(&$0, v) }
+        }
     }
 }

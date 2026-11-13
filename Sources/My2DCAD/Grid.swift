@@ -202,13 +202,14 @@ struct GridControls: View {
             let d = store.doc
             LabeledContent("Espacement") {
                 HStack(spacing: 4) {
-                    TextField("Espacement", value: Binding<Double>(
-                        get: { d.gridMeasure(CGFloat(grid.fixedSpacing)) },
-                        set: { v in
-                            let world = Double(d.gridWorldLength(v))
-                            guard world.isFinite, GridSettings.spacingRange.contains(world) else { return }
-                            update { $0.fixedSpacing = world }
-                        }), format: .number.precision(.fractionLength(0...4)))
+                    NumericField(title: "Espacement", value: Double(d.gridMeasure(CGFloat(grid.fixedSpacing))),
+                                 fractionDigits: 4, context: d.id,
+                                 isValid: { v in
+                                     let world = Double(d.gridWorldLength(v))
+                                     return world.isFinite && GridSettings.spacingRange.contains(world)
+                                 }) { v in
+                        update { $0.fixedSpacing = Double(d.gridWorldLength(v)) }
+                    }
                         .textFieldStyle(.roundedBorder)
                         .multilineTextAlignment(.trailing)
                         .labelsHidden()

@@ -600,12 +600,15 @@ struct Ribbon: View {
                 .frame(width: 190)
                 HStack(spacing: 4) {
                     Text("Échelle 1 :").font(.caption)
-                    TextField("Échelle", value: Binding(
-                        get: { d.scale },
-                        set: { v in store.updatePageSettings { $0.scale = v } }),
-                              format: .number.precision(.fractionLength(0...3)))
+                    NumericField(title: "Échelle", value: d.scale, fractionDigits: 4, context: d.id,
+                                 isValid: { Diagram.scaleRange.contains($0) }) { v in
+                        store.updatePageSettings { $0.scale = v }
+                    }
                         .textFieldStyle(.roundedBorder)
+                        .labelsHidden()
+                        .multilineTextAlignment(.trailing)
                         .frame(width: 70)
+                        .help("Échelle du dessin 1:N — tapez N puis Entrée (1:100 : 1 cm sur la feuille = 1 m réel)")
                     Stepper("Décimales : \(d.precision)", value: Binding(
                         get: { d.precision },
                         set: { v in store.updatePageSettings { $0.precision = v } }), in: 0...4)
@@ -698,13 +701,14 @@ struct Ribbon: View {
                                   help: ShapeOperation.offset.help) { store.runOperation(.offset) }
                     .disabled(!store.canApply(.offset))
                 HStack(spacing: 4) {
-                TextField("Distance", value: Binding<Double>(
-                    get: { d.measure(store.offsetDistance) },
-                    set: { v in
-                        let world = d.worldLength(forMeasure: v)
-                        guard world.isFinite, world > 0, world <= 10_000 else { return }
-                        store.offsetDistance = world
-                    }), format: .number.precision(.fractionLength(0...4)))
+                NumericField(title: "Distance", value: Double(d.measure(store.offsetDistance)), fractionDigits: 4,
+                             isValid: { v in
+                                 let world = d.worldLength(forMeasure: v)
+                                 return world.isFinite && world > 0 && world <= 10_000
+                             }) { v in
+                    store.offsetDistance = d.worldLength(forMeasure: v)
+                }
+                    .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                     .controlSize(.small)
                     .multilineTextAlignment(.trailing)
