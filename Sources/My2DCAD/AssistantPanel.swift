@@ -7,6 +7,7 @@ struct AssistantPanel: View {
     @State private var input = ""
     @State private var hasKey = KeychainStore.hasKey
     @FocusState private var inputFocused: Bool
+    @AppStorage(PanelKey.assistant) private var showAssistant = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,6 +34,10 @@ struct AssistantPanel: View {
             SettingsLink { Image(systemName: "gearshape") }
                 .buttonStyle(.borderless)
                 .help("Réglages de l'assistant (clé API, modèle)")
+            PanelCollapseButton(.assistant)
+            Button { showAssistant = false } label: { Image(systemName: "xmark") }
+                .buttonStyle(.borderless)
+                .help("Fermer le volet (⌥⌘I pour le rouvrir)")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)

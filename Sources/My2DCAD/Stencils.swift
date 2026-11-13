@@ -156,6 +156,7 @@ struct StencilPanel: View {
             HStack {
                 Text("Formes").font(.headline)
                 Spacer()
+                PanelCollapseButton(.shapes)
                 Button { showShapes = false } label: { Image(systemName: "xmark") }
                     .buttonStyle(.borderless)
                     .help("Fermer le volet (⌥⌘1 pour le rouvrir)")

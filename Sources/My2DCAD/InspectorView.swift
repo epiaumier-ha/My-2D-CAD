@@ -13,6 +13,7 @@ struct InspectorView: View {
             HStack {
                 Text(store.selection.isEmpty ? "Page" : "Format de la forme").font(.headline)
                 Spacer()
+                PanelCollapseButton(.format)
                 Button { showFormat = false } label: { Image(systemName: "xmark") }
                     .buttonStyle(.borderless)
                     .help("Fermer le volet (⌥⌘2 pour le rouvrir)")

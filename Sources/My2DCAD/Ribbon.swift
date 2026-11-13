@@ -34,6 +34,7 @@ enum PanelKey {
     static let shapes = "panel.shapes"
     static let format = "panel.format"
     static let assistant = "assistant.visible"
+    static let ribbonCollapsed = "ribbon.collapsed"
 }
 
 enum RibbonTab: String, CaseIterable, Identifiable {
@@ -190,12 +191,14 @@ struct Ribbon: View {
     @AppStorage(PanelKey.shapes) private var showShapes = true
     @AppStorage(PanelKey.format) private var showFormat = true
     @AppStorage(PanelKey.assistant) private var showAssistant = false
+    @AppStorage(PanelKey.ribbonCollapsed) private var collapsed = false
 
     private var tab: RibbonTab { RibbonTab(rawValue: tabName) ?? .home }
 
     var body: some View {
         VStack(spacing: 0) {
             band
+            if !collapsed {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 0) {
                     switch tab {
@@ -211,6 +214,7 @@ struct Ribbon: View {
             }
             .frame(height: 96)
             .background(VisioTheme.ribbon(scheme))
+            }
             Divider()
         }
     }
@@ -246,7 +250,11 @@ struct Ribbon: View {
             .padding(.horizontal, 10)
             .help("Nouveau, ouvrir, enregistrer, exporter, imprimer")
             ForEach(RibbonTab.allCases) { t in
-                Button { tabName = t.rawValue } label: {
+                Button {
+                    // Ruban réduit : un clic sur un onglet le rouvre ; un clic sur l'onglet actif le réduit (Office).
+                    if collapsed { collapsed = false } else if t == tab && NSApp.currentEvent?.clickCount == 2 { collapsed = true }
+                    tabName = t.rawValue
+                } label: {
                     Text(t.rawValue)
                         .font(.callout)
                         .fontWeight(t == tab ? .semibold : .regular)
@@ -260,6 +268,14 @@ struct Ribbon: View {
                 .buttonStyle(.plain)
             }
             Spacer(minLength: 8)
+            Button { collapsed.toggle() } label: {
+                Image(systemName: collapsed ? "chevron.down" : "chevron.up")
+                    .foregroundStyle(.white)
+                    .frame(width: 26, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(collapsed ? "Afficher le ruban (⌥⇧⌘R)" : "Réduire le ruban (⌥⇧⌘R) — double-clic sur un onglet également")
             Button { showAssistant.toggle() } label: {
                 Label("Assistant", systemImage: "sparkles")
                     .font(.callout)

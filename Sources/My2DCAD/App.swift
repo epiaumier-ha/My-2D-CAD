@@ -20,7 +20,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct ContentView: View {
     @EnvironmentObject var store: DocumentStore
-    @Environment(\.colorScheme) private var scheme
     @AppStorage(PanelKey.shapes) private var showShapes = true
     @AppStorage(PanelKey.format) private var showFormat = true
     @AppStorage(PanelKey.assistant) private var showAssistant = false
@@ -29,27 +28,22 @@ struct ContentView: View {
         VStack(spacing: 0) {
             Ribbon()
             // Disposition de Visio : volet Formes à gauche, dessin au centre, volets à droite.
+            // Chaque volet se réduit en bande (chevron) et se redimensionne en faisant glisser son bord.
             HStack(spacing: 0) {
                 if showShapes {
-                    StencilPanel()
-                        .frame(width: 220)
-                        .background(VisioTheme.pane(scheme))
-                    Divider()
+                    SidePanelContainer(.shapes) { StencilPanel() }
                 }
                 VStack(spacing: 0) {
                     DrawingArea()
                     Divider()
                     PageBar()
                 }
+                .frame(minWidth: 320)
                 if showAssistant {
-                    Divider()
-                    AssistantPanel().frame(width: 320)
+                    SidePanelContainer(.assistant) { AssistantPanel() }
                 }
                 if showFormat {
-                    Divider()
-                    InspectorView()
-                        .frame(width: 290)
-                        .background(VisioTheme.pane(scheme))
+                    SidePanelContainer(.format) { InspectorView() }
                 }
             }
             Divider()
@@ -92,6 +86,7 @@ struct My2DCADApp: App {
     @AppStorage(PanelKey.shapes) private var showShapes = true
     @AppStorage(PanelKey.format) private var showFormat = true
     @AppStorage(PanelKey.assistant) private var showAssistant = false
+    @AppStorage(PanelKey.ribbonCollapsed) private var ribbonCollapsed = false
 
     var body: some Scene {
         // Fenêtre unique : le document n'est pas partagé entre plusieurs fenêtres.
@@ -140,6 +135,10 @@ struct My2DCADApp: App {
                 Toggle("Volet Formes", isOn: $showShapes).keyboardShortcut("1", modifiers: [.command, .option])
                 Toggle("Volet Format de la forme", isOn: $showFormat).keyboardShortcut("2", modifiers: [.command, .option])
                 Toggle("Assistant IA", isOn: $showAssistant).keyboardShortcut("i", modifiers: [.command, .option])
+                Toggle("Ruban réduit", isOn: $ribbonCollapsed).keyboardShortcut("r", modifiers: [.command, .option, .shift])
+                Button("Réduire tous les volets") { PanelState.setAllCollapsed(true) }
+                Button("Développer tous les volets") { PanelState.setAllCollapsed(false) }
+                Button("Rétablir la disposition des volets") { PanelState.reset() }
                 Divider()
                 Toggle("Règles", isOn: $store.showRulers).keyboardShortcut("r", modifiers: [.command, .option])
                 Toggle("Grille", isOn: Binding(
