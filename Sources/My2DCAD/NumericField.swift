@@ -189,8 +189,10 @@ extension NumericTextField {
     @MainActor
     static func endEditingIfClickedOutside(_ event: NSEvent) {
         guard let window = event.window,
-              let editor = window.firstResponder as? NSTextView,
-              let field = editor.delegate as? NumericTextField else { return }
+              let editor = window.firstResponder as? NSTextView, editor.isFieldEditor,
+              // Le délégué de l'éditeur de champ est le NSTextField en cours d'édition.
+              let delegate = editor.delegate,
+              let field = (delegate as AnyObject) as? NumericTextField else { return }
         let p = field.convert(event.locationInWindow, from: nil)
         if !field.bounds.contains(p) { window.makeFirstResponder(nil) }
     }
