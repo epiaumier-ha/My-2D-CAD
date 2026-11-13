@@ -2308,3 +2308,112 @@ final class RulerTests: XCTestCase {
         }
     }
 }
+
+/// Moteur factice qui mène lui-même les appels d'outils, comme Apple Intelligence.
+@MainActor
+final class ScriptedToolEngine: ToolRunningEngine {
+    var calls: [(String, JSONValue)]
+    var reply: String
+    var failure: Error?
+    private(set) var results: [String] = []
+    private(set) var prompts: [String] = []
+    private(set) var resets = 0
+
+    init(_ calls: [(String, JSONValue)], reply: String = "C'est fait.", failure: Error? = nil) {
+        self.calls = calls; self.reply = reply; self.failure = failure
+    }
+
+    func run(instructions: String, prompt: String, tools: [JSONValue],
+             execute: @escaping @MainActor @Sendable (String, JSONValue) throws -> String) async throws -> String {
+        prompts.append(prompt)
+        for (name, input) in calls { results.append(try execute(name, input)) }
+        if let failure { throw failure }
+        return reply
+    }
+
+    func reset() { resets += 1 }
+}
+
+@MainActor
+final class AppleAssistantTests: XCTestCase {
+    /// Attente de la fin d'une réponse (le modèle embarqué peut prendre plusieurs dizaines de secondes).
+    private func wait(_ session: AssistantSession) async {
+        for _ in 0..<12_000 where session.isWorking { try? await Task.sleep(nanoseconds: 10_000_000) }
+    }
+
+    func testProviderResolution() {
+        let ok = AppleIntelligence.Status.available
+        let off = AppleIntelligence.Status.unavailable("désactivé")
+        XCTAssertEqual(try? AssistantProvider.resolve(.automatic, hasKey: true, appleStatus: ok).get(), .claude)
+        XCTAssertEqual(try? AssistantProvider.resolve(.automatic, hasKey: false, appleStatus: ok).get(), .apple)
+        XCTAssertNil(try? AssistantProvider.resolve(.automatic, hasKey: false, appleStatus: off).get())
+        XCTAssertEqual(try? AssistantProvider.resolve(.apple, hasKey: true, appleStatus: ok).get(), .apple)
+        guard case .failure(.appleUnavailable(let reason)) = AssistantProvider.resolve(.apple, hasKey: true, appleStatus: off) else {
+            return XCTFail("Apple choisi mais indisponible : erreur attendue")
+        }
+        XCTAssertEqual(reason, "désactivé")
+        XCTAssertEqual(try? AssistantProvider.resolve(.claude, hasKey: true, appleStatus: off).get(), .claude)
+        XCTAssertNil(try? AssistantProvider.resolve(.claude, hasKey: false, appleStatus: ok).get())
+    }
+
+    func testAllToolSchemasConvertForAppleModel() throws {
+        #if canImport(FoundationModels)
+        guard #available(macOS 26.0, *) else { throw XCTSkip("macOS 26 requis") }
+        XCTAssertEqual(AssistantToolbox.specs.count, 12)
+        for spec in AssistantToolbox.specs {
+            XCTAssertNoThrow(try AppleEngine.bridge(spec, execute: { _, _ in "ok" }), spec["name"]?.string ?? "?")
+        }
+        #else
+        throw XCTSkip("FoundationModels absent")
+        #endif
+    }
+
+    func testToolRunningEngineIsOneUndoStepAndKeepsHistory() async throws {
+        let store = DocumentStore()
+        let session = AssistantSession(store: store)
+        let engine = ScriptedToolEngine([
+            ("add_shapes", ["shapes": [["type": "rectangle", "x": 0, "y": 0, "width": 40, "height": 20, "text": "A"],
+                                       ["type": "ellipse", "x": 60, "y": 0, "width": 30, "height": 30]]]),
+            ("add_shapes", ["shapes": [["type": "rectangle", "x": 0, "y": 0, "width": -5]]]),   // refusé
+        ], reply: "J'ai ajouté deux formes.")
+        session.send("Deux formes", toolEngine: engine)
+        await wait(session)
+        XCTAssertEqual(store.doc.shapes.count, 2)
+        XCTAssertEqual(session.entries.map(\.kind), [.user, .action, .assistant])
+        XCTAssertTrue(engine.results[1].hasPrefix("Erreur"), "l'erreur d'outil est renvoyée au modèle")
+        XCTAssertTrue(engine.prompts[0].hasPrefix("Demande : Deux formes"))
+        store.undo()
+        XCTAssertTrue(store.doc.shapes.isEmpty, "toute la réponse s'annule en une fois")
+
+        // Échec du moteur : message d'erreur, et « Nouvelle conversation » réinitialise le moteur.
+        let failing = ScriptedToolEngine([], failure: AssistantError.tooManySteps)
+        session.send("Encore", toolEngine: failing)
+        await wait(session)
+        XCTAssertEqual(session.entries.last?.kind, .error)
+        XCTAssertEqual(session.entries.last?.text, AssistantError.tooManySteps.localizedDescription)
+    }
+
+    /// Essai réel avec Apple Intelligence (lent, dépend du modèle) : APPLE_AI_TEST=1 swift test --filter AppleAssistantTests
+    func testRealAppleIntelligenceDrawsShapes() async throws {
+        guard ProcessInfo.processInfo.environment["APPLE_AI_TEST"] == "1" else { throw XCTSkip("APPLE_AI_TEST=1 pour l'essai réel") }
+        guard case .available = AppleIntelligence.status, let engine = makeAppleEngine() else {
+            throw XCTSkip("Apple Intelligence indisponible")
+        }
+        let store = DocumentStore()
+        let session = AssistantSession(store: store)
+        let started = Date()
+        session.send("Dessine un rectangle avec le texte Début, et un losange avec le texte Fin en dessous, reliés par un connecteur.",
+                     toolEngine: engine)
+        await wait(session)
+        print("Apple Intelligence (\(String(format: "%.1f", Date().timeIntervalSince(started))) s) :",
+              session.entries.map { "[\($0.kind)] \($0.text.replacingOccurrences(of: "\n", with: " ").prefix(600))" }.joined(separator: " | "))
+        print("Formes :", store.doc.shapes.map { "\($0.kind.rawValue) « \($0.text) »" }, "connecteurs :", store.doc.connectors.count)
+        XCTAssertFalse(store.doc.shapes.isEmpty, "le modèle a dessiné")
+        XCTAssertNoThrow(try DiagramIO.validate(store.doc))
+        // Deuxième demande dans la même conversation.
+        session.send("Colore le losange en orange.", toolEngine: engine)
+        await wait(session)
+        print("Suite :", session.entries.suffix(3).map { "[\($0.kind)] \($0.text)" }.joined(separator: " | "))
+        print("Couleurs :", store.doc.shapes.map { "\($0.kind.rawValue) \(AssistantToolbox.hex($0.fill))" })
+    }
+}

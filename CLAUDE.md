@@ -23,6 +23,7 @@ Paquet Swift (swift-tools 5.9, macOS 14, mode de langage Swift 5), sans dépenda
 swift build                                   # compilation
 swift test                                    # tous les tests (XCTest)
 swift test --filter RotationPivotTests        # une classe de tests
+APPLE_AI_TEST=1 swift test --filter AppleAssistantTests   # essai réel avec Apple Intelligence (lent)
 swift run My2DCAD                             # lancer l'application
 scripts/package.sh [--install]                # .app Release, .dmg et .pkg dans dist/ (--install : dans /Applications)
 ```
@@ -60,7 +61,7 @@ Xcode : ouvrir `Package.swift`, schéma « My2DCAD », ⌘R pour lancer, ⌘U po
 | `ShapeOperations.swift` | Union, Combiner, Fragmenter, Intersection, Soustraire, Joindre, Rogner, Décalage, Ajuster la courbe |
 | `Paths.swift` | traits, courbes, longueur des tracés |
 | `Sheet.swift`, `Grid.swift`, `Rulers.swift` | feuille (A5–A2, personnalisée), grille métrique, échelle |
-| `Assistant*.swift` | assistant IA (API Anthropic Messages, outils JSON, clé dans le Trousseau) |
+| `Assistant*.swift` | assistant IA : Claude (API Anthropic Messages, clé dans le Trousseau) ou Apple Intelligence (`AssistantApple.swift`, FoundationModels, sur le Mac) ; mêmes outils JSON validés |
 | `Persistence.swift`, `Export.swift`, `SVG.swift` | fichiers, PDF/PNG/impression, SVG |
 | `NumericField.swift` | champ numérique natif |
 

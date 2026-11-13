@@ -89,6 +89,12 @@ enum AssistantError: LocalizedError {
     case missingKey
     case http(Int, String)
     case invalidResponse
+    /// Apple Intelligence choisi mais indisponible (raison à afficher).
+    case appleUnavailable(String)
+    /// Mode automatique : ni clé API, ni Apple Intelligence.
+    case noEngine
+    /// Trop d'appels d'outils pour une seule demande.
+    case tooManySteps
 
     var errorDescription: String? {
         switch self {
@@ -103,6 +109,12 @@ enum AssistantError: LocalizedError {
             }
         case .invalidResponse:
             return "Réponse de l'API illisible."
+        case .appleUnavailable(let reason):
+            return reason
+        case .noEngine:
+            return "Aucun moteur d'IA disponible : ajoutez une clé API Anthropic dans Réglages (⌘,) › Assistant, ou activez Apple Intelligence."
+        case .tooManySteps:
+            return "L'assistant a atteint le nombre maximal d'étapes pour cette demande."
         }
     }
 }

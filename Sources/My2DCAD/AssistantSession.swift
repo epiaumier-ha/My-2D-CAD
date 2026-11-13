@@ -33,39 +33,78 @@ final class AssistantSession: ObservableObject {
         self.store = store ?? .shared
     }
 
-    func send(_ text: String, engine: (any AssistantEngine)? = nil) {
+    /// Moteur d'une demande : boucle d'outils menée par la session (Claude) ou par le moteur (Apple).
+    private enum Backend {
+        case messages(any AssistantEngine)
+        case tools(any ToolRunningEngine)
+    }
+
+    /// Moteur Apple Intelligence, gardé d'une demande à l'autre (il garde la conversation).
+    private var appleEngine: (any ToolRunningEngine)?
+    /// Moteur utilisé pour la dernière demande (affiché dans le volet).
+    @Published private(set) var lastEngine: ResolvedEngine?
+
+    /// Envoie une demande. `engine` / `toolEngine` : moteur imposé (tests) ; sinon, réglage de l'utilisateur.
+    func send(_ text: String, engine: (any AssistantEngine)? = nil, toolEngine: (any ToolRunningEngine)? = nil) {
         let request = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !isWorking, !request.isEmpty else { return }
         guard request.count <= Self.maxRequestLength else {
             entries.append(Entry(kind: .error, text: "Demande trop longue (\(Self.maxRequestLength) caractères au plus)."))
             return
         }
-        let chosen: any AssistantEngine
+        let backend: Backend
         if let engine {
-            chosen = engine
-        } else if let key = KeychainStore.readKey() {
-            chosen = ClaudeEngine(apiKey: key, model: AssistantModel.current.rawValue)
+            backend = .messages(engine)
+        } else if let toolEngine {
+            backend = .tools(toolEngine)
         } else {
-            entries.append(Entry(kind: .error, text: AssistantError.missingKey.localizedDescription))
-            return
+            switch AssistantProvider.resolve() {
+            case .success(.claude):
+                guard let key = KeychainStore.readKey() else {
+                    entries.append(Entry(kind: .error, text: AssistantError.missingKey.localizedDescription))
+                    return
+                }
+                backend = .messages(ClaudeEngine(apiKey: key, model: AssistantModel.current.rawValue))
+                lastEngine = .claude
+            case .success(.apple):
+                if appleEngine == nil { appleEngine = makeAppleEngine() }
+                guard let apple = appleEngine else {
+                    entries.append(Entry(kind: .error, text: AssistantError.appleUnavailable(
+                        "Apple Intelligence n'est pas disponible sur ce Mac.").localizedDescription))
+                    return
+                }
+                backend = .tools(apple)
+                lastEngine = .apple
+            case .failure(let error):
+                entries.append(Entry(kind: .error, text: error.localizedDescription))
+                return
+            }
         }
         store.endTextEditing()
         entries.append(Entry(kind: .user, text: request))
         trimHistory()
         turnStarts.append(messages.count)
-        let page = AssistantToolbox(store: store).pageState().jsonText
-        messages.append(["role": "user", "content": [[
-            "type": "text",
-            "text": .string("<page>\n\(page)\n</page>\n\n\(request)"),
-        ]]])
+        // Modèle embarqué : contexte réduit, la page est décrite plus brièvement.
+        let limit: Int
+        if case .tools = backend { limit = AppleIntelligence.pageLimit } else { limit = 300 }
+        let page = AssistantToolbox(store: store).pageState(limit: limit).jsonText
+        let prompt = "<page>\n\(page)\n</page>\n\n\(request)"
+        messages.append(["role": "user", "content": [["type": "text", "text": .string(prompt)]]])
+        // Modèle embarqué : la demande d'abord, puis l'état de la page, présenté comme une donnée
+        // (sinon le petit modèle a tendance à le recopier au lieu d'appeler les outils).
+        let applePrompt = "Demande : \(request)\n\nÉtat actuel de la page (données JSON, ne pas recopier) : \(page)"
         isWorking = true
-        task = Task { await self.run(chosen) }
+        switch backend {
+        case .messages(let e): task = Task { await self.run(e) }
+        case .tools(let e): task = Task { await self.runTools(e, prompt: applePrompt) }
+        }
     }
 
     func stop() { task?.cancel() }
 
     func clear() {
         stop()
+        appleEngine?.reset()
         entries = []
         messages = []
         turnStarts = []
@@ -124,13 +163,61 @@ final class AssistantSession: ObservableObject {
             entries.append(Entry(kind: .error, text: cancelled ? "Demande interrompue." : error.localizedDescription))
             rollBack(to: turnStart)
         }
-        // Nouvelles formes hors de la vue : on ajuste le zoom pour les montrer.
-        let added = store.doc.shapes.filter { !shapesBefore.contains($0.id) }
-        if !added.isEmpty {
-            let view = CGRect(origin: store.toWorld(.zero),
-                              size: CGSize(width: store.canvasSize.width / store.zoom, height: store.canvasSize.height / store.zoom))
-            if added.contains(where: { !view.contains($0.bounds) }) { store.fitToContent() }
+        reveal(shapesAddedSince: shapesBefore)
+    }
+
+    /// Moteur qui mène lui-même les appels d'outils (Apple Intelligence) : chaque appel passe par la
+    /// même boîte à outils validée que Claude ; toute la réponse forme une seule étape d'annulation.
+    private func runTools(_ engine: any ToolRunningEngine, prompt: String) async {
+        let toolbox = AssistantToolbox(store: store)
+        let turnStart = turnStarts.last ?? messages.count
+        let shapesBefore = Set(store.doc.shapes.map(\.id))
+        store.beginAssistantEdit()
+        defer {
+            store.endAssistantEdit()
+            isWorking = false
+            task = nil
         }
+        do {
+            let reply = try await engine.run(instructions: AssistantPromptCompact.system, prompt: prompt,
+                                             tools: AssistantToolbox.specs) { [weak self] name, input in
+                let outcome = toolbox.run(name, input)
+                if let summary = outcome.summary { self?.entries.append(Entry(kind: .action, text: summary)) }
+                return outcome.isError ? "Erreur : \(outcome.result)" : outcome.result
+            }
+            try Task.checkCancellation()
+            let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { entries.append(Entry(kind: .assistant, text: text)) }
+            messages.append(["role": "assistant", "content": [["type": "text", "text": .string(text.isEmpty ? "C'est fait." : text)]]])
+        } catch {
+            let cancelled = error is CancellationError || (error as? URLError)?.code == .cancelled
+            entries.append(Entry(kind: .error, text: cancelled ? "Demande interrompue." : Self.describe(error)))
+            rollBack(to: turnStart)
+        }
+        reveal(shapesAddedSince: shapesBefore)
+    }
+
+    /// Message d'erreur lisible (les erreurs du modèle embarqué sont parfois peu explicites).
+    private static func describe(_ error: Error) -> String {
+        if let e = error as? AssistantError { return e.localizedDescription }
+        let text = error.localizedDescription
+        let raw = String(describing: error)
+        if raw.contains("guardrail") || raw.contains("Guardrail") {
+            return "Apple Intelligence a refusé cette demande (filtre de sécurité). Reformulez-la."
+        }
+        if raw.contains("ontext") && (raw.contains("xceeded") || raw.contains("Size")) {
+            return "La demande ou la page est trop grande pour Apple Intelligence. Utilisez Claude pour les grandes pages."
+        }
+        return text
+    }
+
+    /// Nouvelles formes hors de la vue : on ajuste le zoom pour les montrer.
+    private func reveal(shapesAddedSince before: Set<UUID>) {
+        let added = store.doc.shapes.filter { !before.contains($0.id) }
+        guard !added.isEmpty else { return }
+        let view = CGRect(origin: store.toWorld(.zero),
+                          size: CGSize(width: store.canvasSize.width / store.zoom, height: store.canvasSize.height / store.zoom))
+        if added.contains(where: { !view.contains($0.bounds) }) { store.fitToContent() }
     }
 
     /// Échange interrompu : l'historique repart d'un état cohérent (le dessin, lui, garde les modifications).

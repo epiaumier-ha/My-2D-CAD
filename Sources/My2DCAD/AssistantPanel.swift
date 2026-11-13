@@ -8,6 +8,12 @@ struct AssistantPanel: View {
     @State private var hasKey = KeychainStore.hasKey
     @FocusState private var inputFocused: Bool
     @AppStorage(PanelKey.assistant) private var showAssistant = false
+    @AppStorage(AssistantProvider.storageKey) private var provider = AssistantProvider.automatic.rawValue
+
+    /// Moteur qui traitera la prochaine demande, ou la raison pour laquelle aucun n'est utilisable.
+    private var engine: Result<ResolvedEngine, AssistantError> {
+        AssistantProvider.resolve(AssistantProvider(rawValue: provider) ?? .automatic, hasKey: hasKey)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -15,7 +21,7 @@ struct AssistantPanel: View {
             Divider()
             conversation
             Divider()
-            if !hasKey { missingKeyNotice }
+            if case .failure(let error) = engine { unavailableNotice(error) }
             composer
         }
         .background(Color(nsColor: .windowBackgroundColor))
@@ -25,7 +31,16 @@ struct AssistantPanel: View {
 
     private var header: some View {
         HStack {
-            Label("Assistant", systemImage: "sparkles").font(.headline)
+            VStack(alignment: .leading, spacing: 1) {
+                Label("Assistant", systemImage: "sparkles").font(.headline)
+                if case .success(let e) = engine {
+                    Text(e == .apple ? "Apple Intelligence · sur ce Mac" : "\(e.label) · en ligne")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .help(e == .apple ? "Modèle d'Apple embarqué : rien n'est envoyé sur Internet."
+                                          : "Claude, via l'API d'Anthropic (clé API, facturé à l'usage).")
+                }
+            }
             Spacer()
             Button { session.clear() } label: { Image(systemName: "square.and.pencil") }
                 .buttonStyle(.borderless)
@@ -33,7 +48,7 @@ struct AssistantPanel: View {
                 .disabled(session.entries.isEmpty)
             SettingsLink { Image(systemName: "gearshape") }
                 .buttonStyle(.borderless)
-                .help("Réglages de l'assistant (clé API, modèle)")
+                .help("Réglages de l'assistant (moteur, clé API, modèle)")
             PanelCollapseButton(.assistant)
             Button { showAssistant = false } label: { Image(systemName: "xmark") }
                 .buttonStyle(.borderless)
@@ -78,10 +93,11 @@ struct AssistantPanel: View {
             .foregroundStyle(.secondary)
     }
 
-    private var missingKeyNotice: some View {
+    private func unavailableNotice(_ error: AssistantError) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Ajoutez votre clé API Anthropic pour utiliser l'assistant.")
+            Text(error.localizedDescription)
                 .font(.caption)
+                .fixedSize(horizontal: false, vertical: true)
             SettingsLink { Text("Ouvrir les réglages…") }
                 .controlSize(.small)
         }
@@ -106,7 +122,7 @@ struct AssistantPanel: View {
             } else {
                 Button(action: send) { Image(systemName: "arrow.up.circle.fill").font(.title2) }
                     .buttonStyle(.borderless)
-                    .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !hasKey)
+                    .disabled(input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (try? engine.get()) == nil)
                     .help("Envoyer (Entrée)")
             }
         }
@@ -159,12 +175,33 @@ extension Notification.Name {
 
 struct AssistantSettingsView: View {
     @AppStorage(AssistantModel.storageKey) private var model = AssistantModel.default.rawValue
+    @AppStorage(AssistantProvider.storageKey) private var provider = AssistantProvider.automatic.rawValue
+    private let appleStatus = AppleIntelligence.status
     @State private var keyInput = ""
     @State private var hasKey = KeychainStore.hasKey
     @State private var message = ""
 
     var body: some View {
         Form {
+            Section {
+                Picker("Moteur", selection: $provider) {
+                    ForEach(AssistantProvider.allCases) { Text($0.label).tag($0.rawValue) }
+                }
+                LabeledContent("Apple Intelligence") {
+                    switch appleStatus {
+                    case .available:
+                        Label("Disponible", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+                    case .unavailable(let reason):
+                        Text(reason).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            } header: {
+                Text("Moteur de l'assistant")
+            } footer: {
+                Text("Automatique : Claude si une clé API est enregistrée, sinon Apple Intelligence. Apple Intelligence fonctionne sur ce Mac, gratuitement et sans rien envoyer sur Internet, mais son modèle est plus petit : il convient aux demandes simples et aux petites pages.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Section {
                 if hasKey {
                     LabeledContent("Clé API") {
@@ -207,7 +244,7 @@ struct AssistantSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 520)
+        .frame(width: 560)
         .padding()
     }
 
