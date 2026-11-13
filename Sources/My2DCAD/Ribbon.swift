@@ -187,7 +187,8 @@ struct RibbonGroup<Content: View>: View {
 struct Ribbon: View {
     @EnvironmentObject var store: DocumentStore
     @Environment(\.colorScheme) private var scheme
-    @AppStorage("ribbon.tab") private var tabName = RibbonTab.home.rawValue
+    /// Onglet affiché : toujours « Accueil » au démarrage, comme Visio (non mémorisé entre deux lancements).
+    @State private var tabName = RibbonTab.home.rawValue
     @AppStorage(PanelKey.shapes) private var showShapes = true
     @AppStorage(PanelKey.format) private var showFormat = true
     @AppStorage(PanelKey.assistant) private var showAssistant = false
