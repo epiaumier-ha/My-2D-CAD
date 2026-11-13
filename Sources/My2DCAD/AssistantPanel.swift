@@ -8,13 +8,6 @@ struct AssistantPanel: View {
     @State private var hasKey = KeychainStore.hasKey
     @FocusState private var inputFocused: Bool
 
-    private let examples = [
-        "Dessine un organigramme de validation d'une commande en 6 étapes",
-        "Ajoute un rectangle de 5 m × 3 m sans remplissage",
-        "Aligne les formes sélectionnées et colore les décisions en orange",
-        "Analyse ce schéma : y a-t-il des formes non reliées ?",
-    ]
-
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -75,25 +68,9 @@ struct AssistantPanel: View {
     }
 
     private var welcome: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Décrivez ce que vous voulez dessiner ou modifier. Chaque demande s'annule en un ⌘Z.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            ForEach(examples, id: \.self) { example in
-                Button {
-                    input = example
-                    inputFocused = true
-                } label: {
-                    Text(example)
-                        .font(.callout)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.1)))
-                }
-                .buttonStyle(.plain)
-            }
-        }
+        Text("Décrivez ce que vous voulez dessiner ou modifier. Chaque demande s'annule en un ⌘Z.")
+            .font(.callout)
+            .foregroundStyle(.secondary)
     }
 
     private var missingKeyNotice: some View {
