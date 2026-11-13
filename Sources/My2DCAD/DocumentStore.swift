@@ -577,7 +577,7 @@ final class DocumentStore: ObservableObject {
 
     func installEventMonitor() {
         guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify, .keyDown, .keyUp, .rightMouseDown]) { [weak self] event in
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify, .keyDown, .keyUp, .leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self else { return event }
             // Le moniteur local est toujours appelé sur le thread principal ; NSEvent n'est pas
             // Sendable, on le fait donc passer dans une boîte explicitement non vérifiée.
@@ -590,7 +590,12 @@ final class DocumentStore: ObservableObject {
         // Dialogues (ouvrir, enregistrer, alertes) et panneaux (nuancier) : on ne touche à rien.
         if NSApp.modalWindow != nil || e.window is NSPanel { return e }
         switch e.type {
+        case .leftMouseDown:
+            // Clic hors d'un champ numérique en cours de saisie : la valeur est validée d'abord.
+            NumericTextField.endEditingIfClickedOutside(e)
+            return e
         case .rightMouseDown:
+            NumericTextField.endEditingIfClickedOutside(e)
             // Clic droit : la forme sous le pointeur est sélectionnée avant l'ouverture du menu contextuel.
             guard mouseInCanvas, let p = hover, editingShapeID == nil else { return e }
             let w = toWorld(p)
