@@ -98,9 +98,6 @@ struct InspectorView: View {
             pane("Taille et position") {
                 field("X", value: s.rect.origin.x) { $0.rect.origin.x = $1 }
                 field("Y", value: s.rect.origin.y) { $0.rect.origin.y = $1 }
-                Text("Valeurs en \(store.doc.unit.label.lowercased()), à l'échelle 1:\(Diagram.formatCompact(store.doc.scale)) de la page.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
                 if !s.kind.isPath {
                     field("Largeur", value: s.rect.width, minValue: 1) { $0.rect.size.width = $1 }
                     field("Hauteur", value: s.rect.height, minValue: 1) { $0.rect.size.height = $1 }
