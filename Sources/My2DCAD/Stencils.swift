@@ -149,7 +149,8 @@ extension DocumentStore {
 struct StencilPanel: View {
     @AppStorage(PanelKey.shapes) private var showShapes = true
     @State private var search = ""
-    @State private var collapsed: Set<String> = []
+    /// Bibliothèques ouvertes : toutes repliées à l'ouverture de l'application, comme dans Visio.
+    @State private var open: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -202,9 +203,9 @@ struct StencilPanel: View {
 
     private func expanded(_ id: String) -> Binding<Bool> {
         Binding(
-            get: { !search.isEmpty || !collapsed.contains(id) },
-            set: { open in
-                if open { collapsed.remove(id) } else { collapsed.insert(id) }
+            get: { !search.isEmpty || open.contains(id) },
+            set: { isOpen in
+                if isOpen { open.insert(id) } else { open.remove(id) }
             })
     }
 }
