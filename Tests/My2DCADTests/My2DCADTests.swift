@@ -1,6 +1,8 @@
 import XCTest
 import struct SwiftUI.Path
 import PDFKit
+import AppKit
+import class SwiftUI.ImageRenderer
 @testable import My2DCAD
 
 final class GeometryTests: XCTestCase {
@@ -2253,5 +2255,56 @@ final class RobustnessTests: XCTestCase {
         d.connectors = [c]
         let painter = DiagramPainter(diagram: d, zoom: 1, offset: .zero)
         XCTAssertEqual(d.connectorPoints(c, context: painter.routing), d.connectorPoints(c))
+    }
+}
+
+@MainActor
+final class RulerTests: XCTestCase {
+    /// Pixels « encrés » (plus sombres que le fond) d'une image, dans la zone donnée.
+    private func ink(_ image: CGImage, in zone: CGRect, scale: CGFloat) -> Int {
+        let w = image.width, h = image.height
+        var data = [UInt8](repeating: 0, count: w * h * 4)
+        let ctx = CGContext(data: &data, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        var count = 0
+        for y in Int(zone.minY * scale)..<min(Int(zone.maxY * scale), h) {
+            for x in Int(zone.minX * scale)..<min(Int(zone.maxX * scale), w) {
+                let i = (y * w + x) * 4
+                if Int(data[i]) + Int(data[i + 1]) + Int(data[i + 2]) < 3 * 160 { count += 1 }
+            }
+        }
+        return count
+    }
+
+    private func render(vertical: Bool, store: DocumentStore) -> CGImage? {
+        let t = RulerView.thickness
+        let view = RulerView(vertical: vertical, pointer: PointerTracker())
+            .environmentObject(store)
+            .frame(width: vertical ? t : 600, height: vertical ? 600 : t)
+            .environment(\.colorScheme, .light)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        return renderer.cgImage
+    }
+
+    func testVerticalRulerShowsValuesLikeHorizontalRuler() throws {
+        let store = DocumentStore()
+        store.zoom = 1
+        store.offset = CGSize(width: 0, height: 0)
+        let horizontal = try XCTUnwrap(render(vertical: false, store: store))
+        let vertical = try XCTUnwrap(render(vertical: true, store: store))
+        // Zone des nombres : bande extérieure de la règle (les petites graduations sont côté dessin).
+        let t = RulerView.thickness
+        let h = ink(horizontal, in: CGRect(x: 0, y: 1, width: 600, height: t * 0.5), scale: 2)
+        let v = ink(vertical, in: CGRect(x: 1, y: 0, width: t * 0.5, height: 600), scale: 2)
+        XCTAssertGreaterThan(h, 200, "la règle horizontale affiche ses nombres")
+        XCTAssertGreaterThan(Double(v), Double(h) * 0.6, "la règle verticale affiche autant de nombres")
+        if let dir = ProcessInfo.processInfo.environment["RULER_PNG_DIR"] {
+            for (name, image) in [("horizontale", horizontal), ("verticale", vertical)] {
+                let data = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
+                try data?.write(to: URL(fileURLWithPath: dir).appendingPathComponent("regle-\(name).png"))
+            }
+        }
     }
 }

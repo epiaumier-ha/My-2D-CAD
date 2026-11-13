@@ -96,12 +96,17 @@ struct RulerView: View {
                 }
             }
             let pos = offset + value * pxPerUnit
-            let label = Text(Diagram.format(value, decimals: decimals)).font(.system(size: 9)).foregroundColor(.secondary)
+            // « 0 » et non « -0 » à l'origine (floor d'une valeur négative proche de zéro).
+            let label = Text(Diagram.format(abs(value) < step * 1e-9 ? 0 : value, decimals: decimals)).font(.system(size: 9)).foregroundColor(.secondary)
             if vertical {
+                // Comme Visio : nombre tourné (lu de bas en haut), à 1 pt du bord extérieur et juste
+                // après la graduation, comme sur la règle horizontale. Après la rotation de −90°,
+                // l'axe x local monte et l'axe y local va vers la droite : l'ancre « haut-fin »
+                // place le texte dans la règle, sous la graduation.
                 var tc = ctx
-                tc.translateBy(x: 2, y: pos + 2)
+                tc.translateBy(x: 1, y: pos + 2)
                 tc.rotate(by: .degrees(-90))
-                tc.draw(label, at: .zero, anchor: .bottomTrailing)
+                tc.draw(label, at: .zero, anchor: .topTrailing)
             } else {
                 ctx.draw(label, at: CGPoint(x: pos + 2, y: 1), anchor: .topLeading)
             }
