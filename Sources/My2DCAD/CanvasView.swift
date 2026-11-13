@@ -36,6 +36,8 @@ private enum Interaction {
     case resizingText(id: UUID, frame: TextFrame)
     case reconnecting(id: UUID, start: Bool, current: CGPoint)
     case rotating(original: Shape, startAngle: CGFloat)
+    /// Rotation d'un groupe ou d'une sélection multiple : formes d'origine, cadre de départ, angle du pointeur.
+    case rotatingSelection(originals: [Shape], frame: RotationFrame, startAngle: CGFloat, angle: Double)
     /// Tracé d'une forme (outil du ruban, ou forme de bibliothèque `stencil`) : point de départ et pointeur.
     case drawing(kind: ShapeKind, stencil: StencilItem?, start: CGPoint, current: CGPoint)
     case connecting(from: UUID, port: Int, current: CGPoint)
@@ -167,6 +169,11 @@ struct CanvasView: View {
         store.toScreen(s.toWorld(CGPoint(x: s.rect.midX, y: s.rect.minY)))
     }
 
+    /// Poignée de rotation d'un groupe ou d'une sélection multiple, au-dessus de son cadre.
+    private func rotationHandleScreenPoint(_ f: RotationFrame) -> CGPoint {
+        store.toScreen(f.topCenter(margin: (rotationHandleDistance + 7) / store.zoom))
+    }
+
     private func rotationHandleScreenPoint(_ s: Shape) -> CGPoint {
         let local = CGPoint(x: s.rect.midX, y: s.rect.minY - rotationHandleDistance / store.zoom)
         return store.toScreen(s.toWorld(local))
@@ -243,6 +250,12 @@ struct CanvasView: View {
                     interaction = .reconnecting(id: id, start: false, current: w)
                     return
                 }
+            }
+            if let f = store.selectionRotationFrame, rotationHandleScreenPoint(f).distance(to: screen) <= 9 {
+                // Groupe ou sélection multiple : rotation de l'ensemble autour du centre de son cadre.
+                interaction = .rotatingSelection(originals: store.selectedShapes, frame: f,
+                                                 startAngle: atan2(w.y - f.center.y, w.x - f.center.x), angle: f.angle)
+                return
             }
             if let s = store.singleSelectedShape, s.kind.isPath {
                 // Trait / courbe : poignées des extrémités et du point de contrôle.
@@ -375,6 +388,17 @@ struct CanvasView: View {
             if let i = shapeIndex(original.id) {
                 store.doc.shapes[i].rotation = normalizedAngle(degrees)
             }
+
+        case .rotatingSelection(let originals, let frame, let startAngle, _):
+            let c = frame.center
+            let currentAngle = atan2(w.y - c.y, w.x - c.x)
+            var target = frame.angle + Double(currentAngle - startAngle) * 180 / .pi
+            // Maj : pas de 15°, sinon précision au dixième de degré (angle du cadre).
+            target = NSEvent.modifierFlags.contains(.shift)
+                ? (target / 15).rounded() * 15
+                : (target * 10).rounded() / 10
+            store.applyLiveRotation(originals: originals, by: target - frame.angle, around: c)
+            interaction = .rotatingSelection(originals: originals, frame: frame, startAngle: startAngle, angle: target)
 
         case .editingPoint(let id, let index):
             guard let i = shapeIndex(id) else { return }
@@ -774,11 +798,32 @@ struct CanvasView: View {
             ctx.stroke(path, with: .color(accent.opacity(0.35)),
                        style: StrokeStyle(lineWidth: max(CGFloat(c.line.width) * store.zoom, 1) + 6, lineCap: .round))
         }
-        // Groupes sélectionnés : cadre en pointillés autour de l'ensemble.
-        for b in store.selectedGroupBounds {
-            let r = store.toScreen(b).insetBy(dx: -7, dy: -7)
-            ctx.stroke(Path(roundedRect: r, cornerRadius: 4), with: .color(accent),
-                       style: StrokeStyle(lineWidth: 1, dash: [5, 3]))
+        // Groupes sélectionnés : cadre orienté en pointillés autour de chaque groupe.
+        let groupFrames = store.selectedGroupFrames
+        for f in groupFrames { strokeFrame(&ctx, f, dash: [5, 3]) }
+        // Groupe ou sélection multiple : cadre de l'ensemble et poignée de rotation.
+        // Pendant la rotation : le cadre de départ pivote avec les formes.
+        var rotatingAngle: Double?
+        var frame = store.selectionRotationFrame
+        if case .rotatingSelection(_, let start, _, let angle) = interaction {
+            rotatingAngle = angle
+            frame = RotationFrame(center: start.center, size: start.size, angle: angle)
+        }
+        if let f = frame {
+            if !groupFrames.contains(where: { $0.isClose(to: f) }) { strokeFrame(&ctx, f, dash: [2, 3]) }
+            let top = store.toScreen(f.topCenter(margin: 7 / store.zoom))
+            let knob = rotationHandleScreenPoint(f)
+            var stem = Path()
+            stem.move(to: top)
+            stem.addLine(to: knob)
+            ctx.stroke(stem, with: .color(accent), lineWidth: 1)
+            let knobRect = CGRect(x: knob.x - 5, y: knob.y - 5, width: 10, height: 10)
+            ctx.fill(Path(ellipseIn: knobRect), with: .color(.white))
+            ctx.stroke(Path(ellipseIn: knobRect), with: .color(accent), lineWidth: 1.5)
+            if let angle = rotatingAngle {
+                let label = Text("\(normalizedAngle(angle), specifier: "%.1f")°").font(.system(size: 11)).foregroundColor(accent)
+                ctx.draw(label, at: CGPoint(x: knob.x + 14, y: knob.y), anchor: .leading)
+            }
         }
         for s in store.selectedShapes {
             if s.kind.isPath {
@@ -865,6 +910,16 @@ struct CanvasView: View {
             let label = Text("\(s.rotation, specifier: "%.1f")°").font(.system(size: 11)).foregroundColor(accent)
             ctx.draw(label, at: CGPoint(x: knob.x + 14, y: knob.y), anchor: .leading)
         }
+    }
+
+    /// Cadre orienté (groupe, sélection multiple), écarté de 7 px des formes.
+    private func strokeFrame(_ ctx: inout GraphicsContext, _ f: RotationFrame, dash: [CGFloat]) {
+        var grown = f
+        grown.size = CGSize(width: f.size.width + 14 / store.zoom, height: f.size.height + 14 / store.zoom)
+        var path = Path()
+        path.addLines(grown.corners.map { store.toScreen($0) })
+        path.closeSubpath()
+        ctx.stroke(path, with: .color(accent), style: StrokeStyle(lineWidth: 1, dash: dash))
     }
 
     private func drawInteractionPreview(_ ctx: inout GraphicsContext) {

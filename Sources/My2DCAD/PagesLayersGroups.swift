@@ -178,22 +178,12 @@ extension DocumentStore {
     func groupSelection() {
         guard canGroup else { return }
         let group = UUID()
-        editSelection(key: "group-\(group)", shapes: { $0.groupID = group })
+        editSelection(key: "group-\(group)", shapes: { $0.groupID = group; $0.groupRotation = 0 })
     }
 
     /// Dissocier (⇧⌘G).
     func ungroupSelection() {
         guard canUngroup else { return }
-        editSelection(key: "ungroup-\(UUID())", shapes: { $0.groupID = nil })
-    }
-
-    /// Groupes entièrement sélectionnés, avec leur rectangle englobant (pour l'affichage).
-    var selectedGroupBounds: [CGRect] {
-        let shapes = selectedShapes
-        let groups = Dictionary(grouping: shapes.filter { $0.groupID != nil }, by: { $0.groupID! })
-        return groups.values.compactMap { members in
-            guard members.count > 1, let first = members.first else { return nil }
-            return members.dropFirst().reduce(first.bounds) { $0.union($1.bounds) }
-        }
+        editSelection(key: "ungroup-\(UUID())", shapes: { $0.groupID = nil; $0.groupRotation = 0 })
     }
 }

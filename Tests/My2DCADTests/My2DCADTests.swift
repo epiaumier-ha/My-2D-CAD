@@ -1919,3 +1919,120 @@ final class ShapeDrawingTests: XCTestCase {
         XCTAssertNoThrow(try DiagramIO.validate(store.doc))
     }
 }
+
+@MainActor
+final class GroupRotationTests: XCTestCase {
+    /// Groupe : rectangle, trait et cote alignée collée au rectangle, plus une forme hors groupe.
+    private func groupedStore() -> (DocumentStore, rect: UUID, line: UUID, dim: UUID, outside: UUID) {
+        let store = DocumentStore()
+        let rect = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 100, height: 50))
+        var line = Shape(kind: .line, rect: .zero, line: .pathDefault)
+        line.setWorldPoints([CGPoint(x: 0, y: 80), CGPoint(x: 100, y: 80)])
+        var dim = Shape(kind: .dimension, rect: .zero, line: .dimensionDefault)
+        dim.setWorldPoints(makeDimensionPoints(CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0), offset: 20))
+        dim.glue = [GluePoint(point: 0, shape: rect.id, anchor: 0), GluePoint(point: 1, shape: rect.id, anchor: 1)]
+        let outside = Shape(kind: .ellipse, rect: CGRect(x: 300, y: 300, width: 40, height: 40))
+        store.perform { $0.shapes = [rect, line, dim, outside] }
+        store.selection = [rect.id, line.id, dim.id]
+        store.groupSelection()
+        return (store, rect.id, line.id, dim.id, outside.id)
+    }
+
+    func testGroupedShapesOfAllKindsRotateTogether() throws {
+        let (store, rectID, lineID, dimID, outsideID) = groupedStore()
+        store.selection = store.expandedToGroups([rectID])
+        let frame = try XCTUnwrap(store.selectionRotationFrame)
+        let pivot = frame.center
+        let rectCentre = store.doc.shape(rectID)!.center
+        let lineStart = store.doc.shape(lineID)!.worldPoints[0]
+        let measure = store.doc.dimensionMeasure(store.doc.shape(dimID)!)
+
+        store.rotateSelection(by: 90)
+
+        let rect = try XCTUnwrap(store.doc.shape(rectID))
+        XCTAssertEqual(rect.rotation, 90)
+        let expectedCentre = rectCentre.rotated(by: .pi / 2, around: pivot)
+        XCTAssertEqual(rect.center.x, expectedCentre.x, accuracy: 1e-3)
+        XCTAssertEqual(rect.center.y, expectedCentre.y, accuracy: 1e-3)
+        let expectedStart = lineStart.rotated(by: .pi / 2, around: pivot)
+        XCTAssertEqual(store.doc.shape(lineID)!.worldPoints[0].x, expectedStart.x, accuracy: 1e-3)
+        XCTAssertEqual(store.doc.shape(lineID)!.worldPoints[0].y, expectedStart.y, accuracy: 1e-3)
+        let dim = try XCTUnwrap(store.doc.shape(dimID))
+        XCTAssertEqual(dim.glue.count, 2, "la cote reste collée au rectangle du groupe")
+        XCTAssertEqual(store.doc.dimensionMeasure(dim), measure)
+        XCTAssertEqual(store.doc.shape(outsideID)!.rect, CGRect(x: 300, y: 300, width: 40, height: 40), "hors groupe : inchangée")
+        XCTAssertTrue(store.selectedShapes.allSatisfy { $0.groupRotation == 90 })
+        XCTAssertNoThrow(try DiagramIO.validate(store.doc))
+
+        store.undo()
+        XCTAssertEqual(store.doc.shape(rectID)!.rotation, 0)
+        XCTAssertEqual(store.doc.shape(rectID)!.center, rectCentre)
+    }
+
+    func testGroupFrameStaysOrientedAndRotationFieldSetsTheAngle() throws {
+        let (store, rectID, _, _, _) = groupedStore()
+        store.selection = store.expandedToGroups([rectID])
+        let before = try XCTUnwrap(store.selectionRotationFrame)
+        XCTAssertEqual(before.angle, 0)
+
+        store.setSelectionRotation(30)
+        let after = try XCTUnwrap(store.selectionRotationFrame)
+        XCTAssertEqual(after.angle, 30, accuracy: 1e-9)
+        XCTAssertEqual(after.size.width, before.size.width, accuracy: 1e-2, "le cadre du groupe pivote sans grandir")
+        XCTAssertEqual(after.size.height, before.size.height, accuracy: 1e-2)
+        XCTAssertEqual(after.center.x, before.center.x, accuracy: 1e-2)
+        XCTAssertEqual(store.doc.shape(rectID)!.rotation, 30, accuracy: 1e-9)
+
+        store.setSelectionRotation(0)
+        XCTAssertEqual(store.doc.shape(rectID)!.rotation, 0, accuracy: 1e-9)
+        XCTAssertEqual(store.doc.shape(rectID)!.rect.minX, 0, accuracy: 1e-2)
+        XCTAssertEqual(store.doc.shape(rectID)!.rect.minY, 0, accuracy: 1e-2)
+    }
+
+    func testMultipleSelectionRotatesByTheEnteredAngle() throws {
+        let store = DocumentStore()
+        let a = Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 40, height: 20))
+        let b = Shape(kind: .rectangle, rect: CGRect(x: 100, y: 0, width: 40, height: 20))
+        store.perform { $0.shapes = [a, b] }
+        store.selection = [a.id, b.id]
+        XCTAssertEqual(store.selectionRotationFrame?.angle, 0)
+        store.setSelectionRotation(45)
+        XCTAssertEqual(store.doc.shape(a.id)!.rotation, 45, accuracy: 1e-9)
+        XCTAssertEqual(store.doc.shape(b.id)!.rotation, 45, accuracy: 1e-9)
+        XCTAssertEqual(store.doc.shape(a.id)!.groupRotation, 0, "hors groupe : pas d'angle de groupe")
+        XCTAssertEqual(store.selectionRotationFrame?.angle, 0)
+    }
+
+    func testLiveRotationStartsFromTheOriginals() throws {
+        let (store, rectID, _, _, _) = groupedStore()
+        store.selection = store.expandedToGroups([rectID])
+        let frame = try XCTUnwrap(store.selectionRotationFrame)
+        let originals = store.selectedShapes
+        store.beginTransaction()
+        for angle in stride(from: 5.0, through: 60, by: 5) {
+            store.applyLiveRotation(originals: originals, by: angle, around: frame.center)
+        }
+        store.commitTransaction()
+        XCTAssertEqual(store.doc.shape(rectID)!.rotation, 60, accuracy: 1e-9, "pas d'accumulation")
+        XCTAssertEqual(store.selectedShapes.first!.groupRotation, 60, accuracy: 1e-9)
+        store.undo()
+        XCTAssertEqual(store.doc.shape(rectID)!.rotation, 0, "une seule étape d'annulation")
+    }
+
+    func testGroupAngleIsSavedAndResetOnUngroup() throws {
+        let (store, rectID, _, _, _) = groupedStore()
+        store.selection = store.expandedToGroups([rectID])
+        store.setSelectionRotation(20)
+        let s = try XCTUnwrap(store.doc.shape(rectID))
+        let decoded = try JSONDecoder().decode(Shape.self, from: JSONEncoder().encode(s))
+        XCTAssertEqual(decoded.groupRotation, 20, accuracy: 1e-9)
+
+        var bad = store.doc
+        bad.shapes[0].groupRotation = .nan
+        XCTAssertThrowsError(try DiagramIO.validate(bad))
+
+        store.ungroupSelection()
+        XCTAssertTrue(store.doc.shapes.allSatisfy { $0.groupRotation == 0 })
+        XCTAssertEqual(store.doc.shape(rectID)!.rotation, 20, accuracy: 1e-9, "les formes gardent leur rotation")
+    }
+}

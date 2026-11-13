@@ -137,7 +137,26 @@ struct InspectorView: View {
             pane("Sélection") {
                 Text(selectionSummary)
             }
+            if let frame = store.selectionRotationFrame { selectionRotationSection(frame) }
             if !store.selectedShapes.isEmpty && !store.doc.layers.isEmpty { layerSection }
+        }
+    }
+
+    /// Rotation d'un groupe (angle du groupe) ou d'une sélection multiple (angle de départ 0).
+    private func selectionRotationSection(_ frame: RotationFrame) -> some View {
+        let isGroup = store.doc.isWholeGroup(store.selectedShapes)
+        return pane("Rotation") {
+            NumericField(title: isGroup ? "Rotation du groupe (°)" : "Faire pivoter de (°)",
+                         value: frame.angle, fractionDigits: 1, context: store.selection) { v in
+                store.setSelectionRotation(v)
+            }
+            HStack {
+                Button { store.rotateSelection(by: -90) } label: { Label("90° à gauche", systemImage: "rotate.left") }
+                Button { store.rotateSelection(by: 90) } label: { Label("90° à droite", systemImage: "rotate.right") }
+            }
+            Text("Ou poignée ronde au-dessus du cadre (Maj : pas de 15°). Toutes les formes pivotent autour du centre du cadre.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

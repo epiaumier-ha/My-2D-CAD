@@ -76,10 +76,13 @@ struct Shape: Identifiable, Codable, Equatable {
     var glue: [GluePoint] = []
     /// Remplissage pair-impair (résultats des opérations sur les formes : les zones évidées restent vides).
     var evenOdd = false
+    /// Angle du groupe de la forme, en degrés (identique pour tous les membres) : le cadre du groupe
+    /// reste orienté après une rotation. 0 hors groupe.
+    var groupRotation: Double = 0
 
     enum CodingKeys: String, CodingKey {
         case id, kind, rect, text, fill, rotation, points, line, textStyle, noFill, fillTransparency, layerID, groupID
-        case segments, textOffset, textBlockWidth, glue, evenOdd
+        case segments, textOffset, textBlockWidth, glue, evenOdd, groupRotation
     }
 
     /// Couleur de remplissage effective (nil si aucun remplissage).
@@ -115,6 +118,7 @@ extension Shape {
         textBlockWidth = try c.decodeIfPresent(Double.self, forKey: .textBlockWidth)
         glue = try c.decodeIfPresent([GluePoint].self, forKey: .glue) ?? []
         evenOdd = try c.decodeIfPresent(Bool.self, forKey: .evenOdd) ?? false
+        groupRotation = try c.decodeIfPresent(Double.self, forKey: .groupRotation) ?? 0
     }
 }
 

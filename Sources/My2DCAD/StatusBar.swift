@@ -55,7 +55,7 @@ struct StatusBar: View {
                 return "Glisser une extrémité sur un coin, un milieu ou un centre pour coller la cote · Poignée ronde : position de la cote"
             }
             if store.selection.count > 1 {
-                return "Maj-clic : ajouter ou retirer · Flèches : déplacer (⇧ : ×5, ⌥ : 1 pt) · clic droit : aligner, grouper, opérations"
+                return "Poignée ronde : rotation de l'ensemble (Maj : 15°) · Maj-clic : ajouter ou retirer · Flèches : déplacer · clic droit : aligner, grouper"
             }
             if !store.selection.isEmpty {
                 return "Double-clic ou Entrée : texte · ⌥-glisser : dupliquer · Flèches : déplacer · clic droit : plus d'actions"

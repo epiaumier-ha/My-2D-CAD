@@ -148,6 +148,9 @@ enum DiagramIO {
             }
             guard s.line.isValid else { throw DiagramIOError.invalid("style de trait invalide") }
             guard s.rotation.isFinite, abs(s.rotation) <= 360 else { throw DiagramIOError.invalid("rotation invalide") }
+            guard s.groupRotation.isFinite, abs(s.groupRotation) <= 360 else {
+                throw DiagramIOError.invalid("rotation de groupe invalide")
+            }
             guard s.text.count <= maxTextLength else { throw DiagramIOError.invalid("texte trop long") }
             let c = [s.fill.r, s.fill.g, s.fill.b, s.fill.a]
             guard c.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 1 }) else {

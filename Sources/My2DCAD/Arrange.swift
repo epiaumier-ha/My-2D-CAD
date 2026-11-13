@@ -37,7 +37,6 @@ enum DistributionAxis {
     case horizontal, vertical
 }
 
-private func roundCoordinate(_ v: CGFloat) -> CGFloat { (v * 1000).rounded() / 1000 }
 
 @MainActor
 extension DocumentStore {
@@ -206,31 +205,7 @@ extension DocumentStore {
         }
     }
 
-    // MARK: Rotation
-
-    /// Fait pivoter la sélection d'un bloc autour du centre de son rectangle englobant.
-    func rotateSelection(by degrees: Double) {
-        let shapes = selectedShapes
-        guard degrees.isFinite, let all = unionBounds(shapes) else { return }
-        let pivot = CGPoint(x: all.midX, y: all.midY)
-        let a = CGFloat(degrees * .pi / 180)
-        let ids = selection
-        perform { d in
-            for i in d.shapes.indices where ids.contains(d.shapes[i].id) {
-                if d.shapes[i].kind.isPath {
-                    // Traits et courbes : la rotation est appliquée directement aux points.
-                    let pts = d.shapes[i].worldPoints.map { $0.rotated(by: a, around: pivot) }
-                    d.shapes[i].setWorldPoints(pts.map { CGPoint(x: roundCoordinate($0.x), y: roundCoordinate($0.y)) })
-                    continue
-                }
-                let c = d.shapes[i].center.rotated(by: a, around: pivot)
-                let size = d.shapes[i].rect.size
-                d.shapes[i].rect.origin = CGPoint(x: roundCoordinate(c.x - size.width / 2),
-                                                  y: roundCoordinate(c.y - size.height / 2))
-                d.shapes[i].rotation = normalizedAngle(d.shapes[i].rotation + degrees)
-            }
-        }
-    }
+    // Rotation : voir GroupRotation.swift.
 }
 
 // MARK: - Ordre de superposition
