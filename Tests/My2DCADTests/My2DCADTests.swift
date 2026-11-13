@@ -1725,3 +1725,45 @@ final class ConsistencyTests: XCTestCase {
         XCTAssertTrue(AssistantPrompt.system.contains("Pointeur (V)"))
     }
 }
+
+@MainActor
+final class ScaleChangeTests: XCTestCase {
+    func testChangingScaleKeepsRealDimensionsAndResizesTheDrawing() {
+        let store = DocumentStore()
+        store.updatePageSettings { $0.unit = .m; $0.scale = 100 }
+        let w = store.doc.worldLength(forMeasure: 5), h = store.doc.worldLength(forMeasure: 3)
+        let room = Shape(kind: .rectangle, rect: CGRect(x: 20, y: 30, width: w, height: h))
+        var dim = Shape(kind: .dimensionHorizontal, rect: .zero, line: .dimensionDefault)
+        dim.setWorldPoints([CGPoint(x: 20, y: 30), CGPoint(x: 20 + w, y: 30), CGPoint(x: 20 + w / 2, y: 10)])
+        dim.glue = [GluePoint(point: 0, shape: room.id, anchor: 0), GluePoint(point: 1, shape: room.id, anchor: 1)]
+        store.perform {
+            $0.shapes = [room, dim]
+            $0.guides = [GuideLine(vertical: true, position: 100)]
+            $0.grid.mode = .fixed
+            $0.grid.fixedSpacing = Double($0.worldLength(forMeasure: 0.5))
+        }
+
+        store.updatePageSettings { $0.scale = 50 }   // 1:100 → 1:50 : le dessin double sur la feuille
+        let d = store.doc
+        XCTAssertEqual(d.shapes[0].rect.width, 2 * w, accuracy: 1e-9)
+        XCTAssertEqual(d.shapes[0].rect.minX, 40, accuracy: 1e-9)
+        XCTAssertEqual(d.measure(d.shapes[0].rect.width), 5, accuracy: 1e-9, "5 m restent 5 m")
+        XCTAssertEqual(d.dimensionMeasure(d.shapes[1]), "5,0 m")
+        XCTAssertEqual(d.shapes[1].glue.count, 2, "la cote reste collée")
+        XCTAssertEqual(d.guides[0].position, 200, accuracy: 1e-9)
+        XCTAssertEqual(d.measure(d.gridStep(zoom: 1)), 0.5, accuracy: 1e-9, "grille fixe : 0,5 m réels")
+        XCTAssertNoThrow(try DiagramIO.validate(d))
+
+        store.undo()
+        XCTAssertEqual(store.doc.scale, 100)
+        XCTAssertEqual(store.doc.shapes[0].rect.width, w, accuracy: 1e-9)
+    }
+
+    func testScaleChangeThatWouldOverflowIsRefused() {
+        let store = DocumentStore()
+        store.perform { $0.shapes = [Shape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 5_000_000, height: 10))] }
+        store.updatePageSettings { $0.scale = 0.001 }   // ×1000 : dépasserait les limites du dessin
+        XCTAssertEqual(store.doc.scale, 1)
+        XCTAssertEqual(store.doc.shapes[0].rect.width, 5_000_000)
+    }
+}

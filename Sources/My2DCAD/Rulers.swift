@@ -147,10 +147,48 @@ extension DocumentStore {
 
     /// Réglages de la page affichée (unité, échelle, décimales, routage des nouveaux connecteurs).
     func updatePageSettings(_ change: (inout Diagram) -> Void) {
-        perform { d in
-            change(&d)
-            if !Diagram.scaleRange.contains(d.scale) || !d.scale.isFinite { d.scale = 1 }
-            d.precision = min(max(d.precision, 0), 4)
+        let before = doc
+        var d = before
+        change(&d)
+        if !Diagram.scaleRange.contains(d.scale) || !d.scale.isFinite { d.scale = before.scale }
+        d.precision = min(max(d.precision, 0), 4)
+        if d.scale != before.scale {
+            // Comme Visio : changer d'échelle garde les dimensions réelles ; le dessin est
+            // agrandi ou réduit sur la feuille (et donc à l'écran) en conséquence.
+            d.rescaleDrawing(by: CGFloat(before.scale / d.scale),
+                             includingGridSpacing: d.grid.fixedSpacing == before.grid.fixedSpacing)
+            guard (try? DiagramIO.validate(d)) != nil else {
+                NSSound.beep()   // le dessin deviendrait trop grand ou trop petit : échelle refusée
+                return
+            }
+        }
+        let result = d
+        perform { $0 = result }
+    }
+}
+
+extension Diagram {
+    /// Agrandit ou réduit tout le dessin autour de l'origine de la feuille (facteur f) :
+    /// formes, traits, cotes, blocs de texte, repères et grille fixe métrique.
+    /// La taille des textes et l'épaisseur des traits (grandeurs du papier) ne changent pas.
+    mutating func rescaleDrawing(by f: CGFloat, includingGridSpacing: Bool = true) {
+        guard f.isFinite, f > 0, abs(f - 1) > 1e-12 else { return }
+        for i in shapes.indices {
+            var s = shapes[i]
+            if s.kind.isPath {
+                s.setWorldPoints(s.worldPoints.map { CGPoint(x: $0.x * f, y: $0.y * f) })
+            } else {
+                s.rect = CGRect(x: s.rect.minX * f, y: s.rect.minY * f,
+                                width: s.rect.width * f, height: s.rect.height * f)
+            }
+            s.textOffset = CGPoint(x: s.textOffset.x * f, y: s.textOffset.y * f)
+            if let w = s.textBlockWidth { s.textBlockWidth = w * Double(f) }
+            shapes[i] = s
+        }
+        for i in guides.indices { guides[i].position *= f }
+        if includingGridSpacing, grid.measure == .metric {
+            grid.fixedSpacing = min(max(grid.fixedSpacing * Double(f), GridSettings.spacingRange.lowerBound),
+                                    GridSettings.spacingRange.upperBound)
         }
     }
 }
