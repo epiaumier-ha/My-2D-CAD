@@ -28,6 +28,8 @@ private enum Handle: CaseIterable {
 private enum Interaction {
     case moving(origins: [UUID: CGPoint], start: CGPoint, primary: UUID, bounds: CGRect)
     case resizing(original: Shape, handle: Handle)
+    /// Groupe ou sélection multiple : formes au début du geste, cadre de départ, poignée.
+    case resizingFrame(originals: [Shape], frame: RotationFrame, handle: FrameHandle)
     case editingPoint(id: UUID, index: Int)
     case movingGuide(id: UUID)
     /// Déplacement du bloc de texte (poignée jaune) : décalage d'origine, point de départ, angle du repère du texte.
@@ -213,6 +215,14 @@ struct CanvasView: View {
         return store.toScreen(s.toWorld(local))
     }
 
+    private func frameHandleHit(_ f: RotationFrame, at screen: CGPoint) -> FrameHandle? {
+        // Cadre trop petit à l'écran : seules les poignées de coin restent (comme Visio).
+        let small = f.size.width * store.zoom < 30 || f.size.height * store.zoom < 30
+        return FrameHandle.allCases.first { h in
+            (h.isCorner || !small) && store.toScreen(f.handlePoint(h)).distance(to: screen) <= 7
+        }
+    }
+
     private func handleHit(_ s: Shape, at screen: CGPoint) -> Handle? {
         Handle.allCases.first { handleScreenPoint(s, $0).distance(to: screen) <= 8 }
     }
@@ -301,6 +311,11 @@ struct CanvasView: View {
                 interaction = .rotating(originals: store.selectedShapes, frame: target.frame, pivot: p,
                                         baseAngle: target.angle, startAngle: atan2(w.y - p.y, w.x - p.x),
                                         angle: target.angle)
+                return
+            }
+            // Groupe ou sélection multiple : 8 poignées sur le cadre (comme Visio).
+            if let f = store.selectionRotationFrame, let h = frameHandleHit(f, at: screen) {
+                interaction = .resizingFrame(originals: store.selectedShapes, frame: f, handle: h)
                 return
             }
             if let s = store.singleSelectedShape, s.kind.isPath {
@@ -429,6 +444,16 @@ struct CanvasView: View {
                 store.doc.shapes[i].rect = CGRect(x: newCenter.x - width / 2, y: newCenter.y - height / 2,
                                                   width: width, height: height)
             }
+
+        case .resizingFrame(let originals, let frame, let handle):
+            // Cadre droit : la poignée s'accroche à la grille ; Maj (coins) : proportions gardées.
+            let pointer = frame.angle == 0 ? snapPoint(w) : w
+            guard let t = frame.scaling(handle: handle, to: pointer,
+                                        proportional: NSEvent.modifierFlags.contains(.shift),
+                                        minSize: minimumShapeSize) else { return }
+            var d = store.doc
+            d.applyScaling(t, to: originals)
+            store.doc = d
 
         case .rotating(let originals, let frame, let pivot, let baseAngle, let startAngle, _):
             // Pointeur sur le point de rotation : angle indéfini, on attend qu'il s'en écarte.
@@ -1025,7 +1050,22 @@ struct CanvasView: View {
            store.toScreen(target.pivot).distance(to: p) <= 6 {
             return .crosshair
         }
+        if store.tool == .select, let f = store.selectionRotationFrame, let h = frameHandleHit(f, at: p) {
+            return resizeCursor(h, angle: f.angle)
+        }
         return cursor(for: store.tool)
+    }
+
+    /// Curseur de redimensionnement selon la direction de la poignée à l'écran (cadre orienté).
+    private func resizeCursor(_ h: FrameHandle, angle: Double) -> NSCursor {
+        let d = h.direction
+        var a = atan2(Double(d.y), Double(d.x)) * 180 / .pi + angle
+        a = a.truncatingRemainder(dividingBy: 180)
+        if a < 0 { a += 180 }
+        // Horizontale ou verticale : flèches du système ; diagonale : croix.
+        if a < 22.5 || a >= 157.5 { return .resizeLeftRight }
+        if a >= 67.5 && a < 112.5 { return .resizeUpDown }
+        return .crosshair
     }
 
     private func cursor(for tool: Tool) -> NSCursor {
@@ -1064,6 +1104,16 @@ struct CanvasView: View {
             if !groupFrames.contains(where: { $0.isClose(to: f) }) { strokeFrame(&ctx, f, dash: [2, 3]) }
             drawRotationKnob(&ctx, from: store.toScreen(f.topCenter(margin: 7 / store.zoom)),
                              knob: rotationHandleScreenPoint(f))
+            // Poignées de taille du cadre (masquées pendant la rotation).
+            if case .rotating = interaction {} else {
+                let small = f.size.width * store.zoom < 30 || f.size.height * store.zoom < 30
+                for h in FrameHandle.allCases where h.isCorner || !small {
+                    let p = store.toScreen(f.handlePoint(h))
+                    let box = CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)
+                    ctx.fill(Path(box), with: .color(.white))
+                    ctx.stroke(Path(box), with: .color(accent), lineWidth: 1.5)
+                }
+            }
         }
         drawPivot(&ctx)
         for s in store.selectedShapes {

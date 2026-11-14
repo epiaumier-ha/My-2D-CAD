@@ -71,7 +71,7 @@ struct StatusBar: View {
                 return "Glisser une extrémité sur un coin, un milieu ou un centre pour coller la cote · Poignée ronde : position de la cote"
             }
             if store.selection.count > 1 {
-                return "Poignée ronde : rotation de l'ensemble (Maj : 15°) · ⊕ : point de rotation · Maj-clic : ajouter ou retirer · clic droit : aligner, grouper"
+                return "Poignées carrées : taille (Maj : proportions) · Poignée ronde : rotation (Maj : 15°) · ⊕ : point de rotation · Maj-clic : ajouter ou retirer · clic droit : grouper"
             }
             if !store.selection.isEmpty {
                 return "Double-clic ou Entrée : texte · Poignée ronde : rotation · ⊕ : point de rotation · ⌥-glisser : dupliquer · clic droit : plus d'actions"

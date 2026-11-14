@@ -3293,3 +3293,121 @@ final class UserStencilTests: XCTestCase {
         XCTAssertNil(library.dropTarget(at: CGPoint(x: 10, y: 10)), "gabarit inconnu")
     }
 }
+
+@MainActor
+final class GroupResizeTests: XCTestCase {
+    /// Rectangle 100×50 en (0,0) et trait de (200,0) à (300,100), groupés : cadre 300×100.
+    private func groupedStore() throws -> DocumentStore {
+        let store = DocumentStore()
+        store.insertShape(kind: .rectangle, rect: CGRect(x: 0, y: 0, width: 100, height: 50))
+        let rect = try XCTUnwrap(store.selection.first)
+        store.insertPath(kind: .line, from: CGPoint(x: 200, y: 0), to: CGPoint(x: 300, y: 100), line: nil)
+        let line = try XCTUnwrap(store.selection.first)
+        store.selection = [rect, line]
+        store.groupSelection()
+        return store
+    }
+
+    private func frame(_ store: DocumentStore) throws -> RotationFrame {
+        try XCTUnwrap(store.selectionRotationFrame)
+    }
+
+    func testCornerHandleScalesMembersFromOppositeCorner() throws {
+        let store = try groupedStore()
+        let f = try frame(store)
+        XCTAssertEqual(f.size.width, 300, accuracy: 1e-9)
+        XCTAssertEqual(f.size.height, 100, accuracy: 1e-9)
+        let t = try XCTUnwrap(f.scaling(handle: .bottomRight, to: CGPoint(x: 600, y: 150), proportional: false, minSize: 10))
+        XCTAssertEqual(t.sx, 2, accuracy: 1e-9)
+        XCTAssertEqual(t.sy, 1.5, accuracy: 1e-9)
+        store.doc.applyScaling(t, to: store.selectedShapes)
+        let rect = try XCTUnwrap(store.doc.shapes.first { $0.kind == .rectangle })
+        XCTAssertEqual(rect.rect, CGRect(x: 0, y: 0, width: 200, height: 75))
+        let line = try XCTUnwrap(store.doc.shapes.first { $0.kind == .line }).worldPoints
+        XCTAssertEqual(line[0].x, 400, accuracy: 1e-9)
+        XCTAssertEqual(line[1].x, 600, accuracy: 1e-9)
+        XCTAssertEqual(line[1].y, 150, accuracy: 1e-9)
+        let after = try frame(store)
+        XCTAssertTrue(after.isClose(to: t.scaledFrame), "le nouveau cadre suit la poignée")
+    }
+
+    func testSideHandleChangesOneAxisOnly() throws {
+        let store = try groupedStore()
+        let f = try frame(store)
+        let t = try XCTUnwrap(f.scaling(handle: .left, to: CGPoint(x: -300, y: 999), proportional: true, minSize: 10))
+        XCTAssertEqual(t.sx, 2, accuracy: 1e-9)
+        XCTAssertEqual(t.sy, 1, "milieu de côté : une seule dimension, même avec Maj")
+        store.doc.applyScaling(t, to: store.selectedShapes)
+        let rect = try XCTUnwrap(store.doc.shapes.first { $0.kind == .rectangle })
+        XCTAssertEqual(rect.rect.minX, -300, accuracy: 1e-9)
+        XCTAssertEqual(rect.rect.width, 200, accuracy: 1e-9)
+        XCTAssertEqual(rect.rect.height, 50, accuracy: 1e-9)
+    }
+
+    func testShiftKeepsProportionsAndNoFlip() throws {
+        let store = try groupedStore()
+        let f = try frame(store)
+        let t = try XCTUnwrap(f.scaling(handle: .bottomRight, to: CGPoint(x: 600, y: 120), proportional: true, minSize: 10))
+        XCTAssertEqual(t.sx, t.sy)
+        XCTAssertEqual(t.sx, 2, accuracy: 1e-9)
+        // Pointeur au-delà du coin fixe : pas de retournement, taille minimale.
+        let flip = try XCTUnwrap(f.scaling(handle: .bottomRight, to: CGPoint(x: -500, y: -500), proportional: false, minSize: 10))
+        XCTAssertEqual(flip.sx * 300, 10, accuracy: 1e-9)
+        XCTAssertEqual(flip.sy * 100, 10, accuracy: 1e-9)
+        XCTAssertNil(f.scaling(handle: .top, to: CGPoint(x: CGFloat.nan, y: 0), proportional: false, minSize: 10))
+    }
+
+    func testTextAndLineWidthUnchangedAndUndoIsOneStep() throws {
+        let store = try groupedStore()
+        store.perform { d in
+            for i in d.shapes.indices { d.shapes[i].line.width = 3; d.shapes[i].textStyle.size = 14 }
+        }
+        let before = store.doc
+        let f = try frame(store)
+        let t = try XCTUnwrap(f.scaling(handle: .topRight, to: CGPoint(x: 900, y: -200), proportional: false, minSize: 10))
+        store.beginTransaction()
+        store.doc.applyScaling(t, to: store.selectedShapes)
+        store.commitTransaction()
+        XCTAssertTrue(store.doc.shapes.allSatisfy { $0.line.width == 3 && $0.textStyle.size == 14 })
+        XCTAssertTrue(store.doc.shapes.allSatisfy { $0.groupID == before.shapes[0].groupID }, "le groupe est conservé")
+        XCTAssertNoThrow(try DiagramIO.validate(store.doc))
+        store.undo()
+        XCTAssertEqual(store.doc, before)
+    }
+
+    func testRotatedGroupScalesAlongItsOwnAxes() throws {
+        let store = try groupedStore()
+        store.rotateSelection(by: 90)
+        let f = try frame(store)
+        XCTAssertEqual(f.angle, 90, accuracy: 1e-9)
+        // Poignée « droite » du cadre pivoté de 90° : elle est en bas à l'écran.
+        let target = f.toWorld(CGPoint(x: f.size.width, y: 0))
+        let t = try XCTUnwrap(f.scaling(handle: .right, to: target, proportional: false, minSize: 10))
+        XCTAssertEqual(t.sx, 1.5, accuracy: 1e-9)
+        store.doc.applyScaling(t, to: store.selectedShapes)
+        let rect = try XCTUnwrap(store.doc.shapes.first { $0.kind == .rectangle })
+        XCTAssertEqual(rect.rect.width, 150, accuracy: 1e-6, "largeur propre du rectangle, le long de l'axe du groupe")
+        XCTAssertEqual(rect.rect.height, 50, accuracy: 1e-6)
+        XCTAssertEqual(rect.rotation, 90, accuracy: 1e-9)
+        let after = try frame(store)
+        XCTAssertEqual(after.size.width, 450, accuracy: 1e-6)
+        XCTAssertEqual(after.size.height, 100, accuracy: 1e-6)
+    }
+
+    func testMultipleSelectionAndFlatFrame() throws {
+        let store = DocumentStore()
+        store.insertPath(kind: .line, from: CGPoint(x: 0, y: 0), to: CGPoint(x: 100, y: 0), line: nil)
+        let a = try XCTUnwrap(store.selection.first)
+        store.insertPath(kind: .line, from: CGPoint(x: 200, y: 0), to: CGPoint(x: 300, y: 0), line: nil)
+        let b = try XCTUnwrap(store.selection.first)
+        store.selection = [a, b]
+        let f = try frame(store)
+        XCTAssertEqual(f.size.height, 0, accuracy: 1e-9)
+        let t = try XCTUnwrap(f.scaling(handle: .bottomRight, to: CGPoint(x: 600, y: 80), proportional: true, minSize: 10))
+        XCTAssertEqual(t.sx, 2, accuracy: 1e-9)
+        XCTAssertEqual(t.sy, 1, "cadre plat : pas d'échelle verticale")
+        store.doc.applyScaling(t, to: store.selectedShapes)
+        XCTAssertEqual(try XCTUnwrap(store.doc.shape(b)).worldPoints.last?.x ?? 0, 600, accuracy: 1e-9)
+        XCTAssertTrue(store.doc.shapes.allSatisfy { $0.groupID == nil }, "une sélection multiple n'est pas groupée")
+    }
+}
