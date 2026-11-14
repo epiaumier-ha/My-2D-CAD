@@ -314,6 +314,68 @@ final class UserStencilLibrary: ObservableObject {
         return stencil.id
     }
 
+    // MARK: Import de fichiers SVG
+
+    /// Résultat d'un import : formes ajoutées et fichiers refusés (nom et raison).
+    struct SVGImportReport: Equatable {
+        var added = 0
+        var failures: [String] = []
+    }
+
+    /// Ajoute des fichiers SVG au gabarit : une forme par fichier, nommée d'après le fichier ;
+    /// les fichiers illisibles sont ignorés et signalés. Un seul enregistrement du gabarit.
+    @discardableResult
+    func importSVGFiles(_ urls: [URL], into id: UUID) throws -> SVGImportReport {
+        guard let e = entry(id) else { return SVGImportReport() }
+        var report = SVGImportReport()
+        var masters: [UserMaster] = []
+        let room = max(UserStencilIO.maxMasters - e.stencil.masters.count, 0)
+        for url in urls.prefix(SVGImporter.maxFilesPerImport) {
+            guard masters.count < room else {
+                report.failures.append("\(url.lastPathComponent) : le gabarit est plein (\(UserStencilIO.maxMasters) formes)")
+                continue
+            }
+            do {
+                let fragment = try SVGImporter.fragment(contentsOf: url)
+                guard fragment.shapes.count <= UserStencilIO.maxShapesPerMaster else {
+                    throw DiagramIOError.invalid("dessin trop complexe pour une forme de gabarit")
+                }
+                let name = String(url.deletingPathExtension().lastPathComponent.prefix(DiagramIO.maxNameLength))
+                guard let master = UserMaster.make(name: name.isEmpty ? "Dessin SVG" : name, from: fragment) else {
+                    throw SVGImportError.empty
+                }
+                // Contrôle de chaque forme avant l'ajout : un fichier refusé n'empêche pas les autres.
+                try UserStencilIO.validate(UserStencil(name: "contrôle", masters: [master]))
+                masters.append(master)
+            } catch {
+                report.failures.append("\(url.lastPathComponent) : \(error.localizedDescription)")
+            }
+        }
+        if urls.count > SVGImporter.maxFilesPerImport {
+            report.failures.append("\(urls.count - SVGImporter.maxFilesPerImport) fichiers non importés (\(SVGImporter.maxFilesPerImport) au plus à la fois)")
+        }
+        if !masters.isEmpty {
+            try update(id) { $0.masters.append(contentsOf: masters) }
+            report.added = masters.count
+        }
+        return report
+    }
+
+    /// Fichiers SVG d'un dossier (sans les sous-dossiers), triés par nom.
+    static func svgFiles(in folder: URL) throws -> [URL] {
+        try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
+            .filter(SVGImporter.isSVGFile)
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+    }
+
+    /// Nouveau gabarit, nommé comme le dossier, avec une forme par fichier SVG du dossier.
+    func createStencil(fromSVGFolder folder: URL) throws -> (id: UUID, report: SVGImportReport) {
+        let files = try Self.svgFiles(in: folder)
+        guard !files.isEmpty else { throw DiagramIOError.invalid("aucun fichier SVG dans ce dossier") }
+        let id = try createStencil(named: folder.lastPathComponent)
+        return (id, try importSVGFiles(files, into: id))
+    }
+
     // MARK: Glisser-déposer
 
     static func dragPayload(stencil: UUID, master: UUID) -> String {
@@ -404,6 +466,7 @@ struct UserStencilsSection: View {
                 Spacer()
                 Menu {
                     Button("Nouveau gabarit…") { newStencil() }
+                    Button("Nouveau gabarit depuis un dossier SVG…") { newStencilFromSVGFolder() }
                     Button("Ouvrir un gabarit…") { importStencil() }
                     Divider()
                     Button("Afficher le dossier dans le Finder") { revealFolder() }
@@ -447,6 +510,8 @@ struct UserStencilsSection: View {
                 .help("Ajouter la sélection à « \(e.stencil.name) »")
             }
             .contextMenu {
+                Button("Importer des SVG…") { importSVG(into: e.id) }
+                Divider()
                 Button("Renommer le gabarit…") {
                     if let name = UserStencilPrompt.text(title: "Renommer le gabarit", value: e.stencil.name) {
                         perform { try library.renameStencil(e.id, to: name) }
@@ -502,6 +567,36 @@ struct UserStencilsSection: View {
             let id = try library.importStencil(from: url)
             open.insert(Self.sectionKey)
             open.insert(id.uuidString)
+        }
+    }
+
+    private func importSVG(into id: UUID) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.svg]
+        panel.message = "Chaque fichier SVG devient une forme du gabarit, nommée d'après le fichier."
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        perform {
+            let report = try library.importSVGFiles(panel.urls, into: id)
+            open.insert(id.uuidString)
+            UserStencilPrompt.report(report)
+        }
+    }
+
+    private func newStencilFromSVGFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Créer le gabarit"
+        panel.message = "Choisissez un dossier : chaque fichier SVG qu'il contient devient une forme du nouveau gabarit."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        perform {
+            let (id, report) = try library.createStencil(fromSVGFolder: url)
+            open.insert(Self.sectionKey)
+            open.insert(id.uuidString)
+            UserStencilPrompt.report(report)
         }
     }
 
@@ -597,6 +692,18 @@ enum UserStencilPrompt {
         let name = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return nil }
         return String(name.prefix(DiagramIO.maxNameLength))
+    }
+
+    /// Fichiers SVG refusés lors d'un import (rien à signaler si tout est passé).
+    static func report(_ r: UserStencilLibrary.SVGImportReport) {
+        guard !r.failures.isEmpty else { return }
+        let alert = NSAlert()
+        alert.messageText = r.added == 0 ? "Aucun fichier SVG n'a pu être importé"
+                                         : "\(r.added) forme(s) importée(s), \(r.failures.count) fichier(s) refusé(s)"
+        alert.informativeText = r.failures.prefix(20).joined(separator: "\n")
+            + (r.failures.count > 20 ? "\n…" : "")
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 
     static func error(_ error: Error) {

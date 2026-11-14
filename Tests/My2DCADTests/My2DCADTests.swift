@@ -3454,3 +3454,90 @@ final class GroupResizeTests: XCTestCase {
         XCTAssertTrue(store.doc.shapes.allSatisfy { $0.groupID == nil }, "une sélection multiple n'est pas groupée")
     }
 }
+
+@MainActor
+final class SVGFileImportTests: XCTestCase {
+    private var dir: URL!
+
+    override func setUp() async throws {
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent("SVG-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+
+    override func tearDown() async throws {
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    @discardableResult
+    private func write(_ name: String, _ body: String) throws -> URL {
+        let url = dir.appendingPathComponent(name)
+        try Data(body.utf8).write(to: url)
+        return url
+    }
+
+    private let twoShapes = """
+    <svg xmlns="http://www.w3.org/2000/svg"><rect x="10" y="10" width="40" height="20"/><circle cx="80" cy="20" r="10"/></svg>
+    """
+    private let oneShape = """
+    <svg xmlns="http://www.w3.org/2000/svg"><rect x="0" y="0" width="30" height="30"/></svg>
+    """
+
+    func testSeveralFilesSideBySideInOneUndoStep() throws {
+        let a = try write("a.svg", twoShapes)
+        let b = try write("b.svg", oneShape)
+        let store = DocumentStore()
+        store.snapEnabled = false
+        store.importSVG(urls: [a, b], centeredAt: CGPoint(x: 500, y: 500))
+        XCTAssertEqual(store.doc.shapes.count, 3)
+        XCTAssertEqual(Set(store.doc.shapes.compactMap(\.groupID)).count, 1, "le dessin de plusieurs formes est groupé")
+        let all = store.doc.shapes.dropFirst().reduce(store.doc.shapes[0].bounds) { $0.union($1.bounds) }
+        XCTAssertEqual(all.midX, 500, accuracy: 1e-6)
+        XCTAssertEqual(all.width, 80 + 20 + 30, accuracy: 1e-6, "côte à côte, espacés de 20 pt")
+        XCTAssertTrue(store.doc.shapes.allSatisfy { $0.layerID == store.doc.activeLayerID })
+        store.undo()
+        XCTAssertTrue(store.doc.shapes.isEmpty)
+    }
+
+    func testStencilImportOneMasterPerFileAndReportsFailures() throws {
+        let a = try write("Fenêtre.svg", twoShapes)
+        let bad = try write("abîmé.svg", "<html/>")
+        let library = UserStencilLibrary(directory: dir.appendingPathComponent("Mes formes"))
+        let id = try library.createStencil(named: "Plans")
+        let report = try library.importSVGFiles([a, bad], into: id)
+        XCTAssertEqual(report.added, 1)
+        XCTAssertEqual(report.failures.count, 1)
+        XCTAssertTrue(report.failures[0].hasPrefix("abîmé.svg"))
+        let master = try XCTUnwrap(library.entry(id)?.stencil.masters.first)
+        XCTAssertEqual(master.name, "Fenêtre")
+        XCTAssertEqual(master.bounds.origin, .zero)
+        XCTAssertEqual(master.fragment.shapes.count, 2)
+
+        let reloaded = UserStencilLibrary(directory: library.directory)
+        reloaded.reload()
+        XCTAssertEqual(reloaded.entry(id)?.stencil.masters.count, 1, "enregistré")
+    }
+
+    func testStencilFromFolder() throws {
+        try write("b.svg", oneShape)
+        try write("a.svg", twoShapes)
+        try write("notes.txt", "pas un dessin")
+        let library = UserStencilLibrary(directory: FileManager.default.temporaryDirectory
+            .appendingPathComponent("MesFormes-\(UUID().uuidString)"))
+        defer { try? FileManager.default.removeItem(at: library.directory) }
+        let (id, report) = try library.createStencil(fromSVGFolder: dir)
+        XCTAssertTrue(report.failures.isEmpty)
+        let stencil = try XCTUnwrap(library.entry(id)?.stencil)
+        XCTAssertEqual(stencil.name, dir.lastPathComponent)
+        XCTAssertEqual(stencil.masters.map(\.name), ["a", "b"])
+
+        let empty = dir.appendingPathComponent("vide")
+        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try library.createStencil(fromSVGFolder: empty))
+    }
+
+    func testOnlySVGFilesAreAccepted() {
+        XCTAssertTrue(SVGImporter.isSVGFile(URL(fileURLWithPath: "/tmp/Plan.SVG")))
+        XCTAssertFalse(SVGImporter.isSVGFile(URL(fileURLWithPath: "/tmp/plan.svgz")))
+        XCTAssertFalse(SVGImporter.isSVGFile(URL(string: "https://exemple.fr/a.svg")!))
+    }
+}

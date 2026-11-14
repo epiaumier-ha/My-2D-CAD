@@ -281,6 +281,37 @@ final class SVGImporter: NSObject, XMLParserDelegate {
     private var textTransform = CGAffineTransform.identity
     private var inText = false
 
+    /// Nombre de fichiers importés en une fois (dessin ou gabarit).
+    static let maxFilesPerImport = 200
+
+    /// Lit un fichier SVG (taille contrôlée avant lecture).
+    static func fragment(contentsOf url: URL) throws -> ClipboardFragment {
+        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+        if let size = attrs[.size] as? Int, size > maxFileSize { throw SVGImportError.tooLarge }
+        return try fragment(from: Data(contentsOf: url))
+    }
+
+    /// Formes d'un SVG, réunies en un groupe s'il y en a plusieurs, sans calque.
+    static func fragment(from data: Data) throws -> ClipboardFragment {
+        var shapes = try shapes(from: data)
+        let group = shapes.count > 1 ? UUID() : nil
+        for i in shapes.indices {
+            shapes[i].groupID = group
+            shapes[i].layerID = nil
+        }
+        return ClipboardFragment(shapes: shapes, connectors: [])
+    }
+
+    static func bounds(_ fragment: ClipboardFragment) -> CGRect {
+        guard let first = fragment.shapes.first else { return .zero }
+        return fragment.shapes.dropFirst().reduce(first.bounds) { $0.union($1.bounds) }
+    }
+
+    /// Fichier SVG d'après son extension (glisser-déposer, contenu d'un dossier).
+    static func isSVGFile(_ url: URL) -> Bool {
+        url.isFileURL && url.pathExtension.lowercased() == "svg"
+    }
+
     static func shapes(from data: Data) throws -> [Shape] {
         guard data.count <= maxFileSize else { throw SVGImportError.tooLarge }
         let importer = SVGImporter()
@@ -794,37 +825,69 @@ extension DocumentStore {
         }
     }
 
+    /// Insertion › Dessin SVG : un ou plusieurs fichiers, posés côte à côte au centre de la vue.
     func importSVG() {
         if editingShapeID != nil { commitTextEditing() }
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.svg]
-        panel.allowsMultipleSelection = false
-        panel.message = "Le dessin est ajouté à la page affichée, regroupé et centré dans la vue."
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
-            if let size = attrs[.size] as? Int, size > SVGImporter.maxFileSize { throw SVGImportError.tooLarge }
-            try importSVG(data: Data(contentsOf: url))
-        } catch {
-            showError("Impossible d'importer le fichier SVG", error)
+        panel.allowsMultipleSelection = true
+        panel.message = "Chaque dessin est ajouté à la page affichée, regroupé ; plusieurs dessins sont posés côte à côte."
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        importSVG(urls: panel.urls, centeredAt: visibleCenter)
+    }
+
+    /// Ajoute des fichiers SVG à la page, centrés sur `center` (une étape d'annulation) ; les fichiers
+    /// illisibles sont signalés, les autres sont importés.
+    func importSVG(urls: [URL], centeredAt center: CGPoint) {
+        var fragments: [ClipboardFragment] = []
+        var failures: [String] = []
+        for url in urls.prefix(SVGImporter.maxFilesPerImport) {
+            do {
+                fragments.append(try SVGImporter.fragment(contentsOf: url))
+            } catch {
+                failures.append("\(url.lastPathComponent) : \(error.localizedDescription)")
+            }
+        }
+        if urls.count > SVGImporter.maxFilesPerImport {
+            failures.append("\(urls.count - SVGImporter.maxFilesPerImport) fichiers non importés (\(SVGImporter.maxFilesPerImport) au plus à la fois)")
+        }
+        if !fragments.isEmpty, !insertSVGFragments(fragments, centeredAt: center) {
+            failures.append("Trop de formes ou valeurs hors limites : rien n'a été ajouté.")
+        }
+        if !failures.isEmpty {
+            showError("Certains fichiers SVG n'ont pas pu être importés",
+                      SVGImportError.invalid("\n" + failures.joined(separator: "\n")))
         }
     }
 
     /// Ajoute les formes d'un SVG à la page : un seul groupe, centré dans la vue, une étape d'annulation.
     func importSVG(data: Data) throws {
-        var shapes = try SVGImporter.shapes(from: data)
-        guard let first = shapes.first else { throw SVGImportError.empty }
-        let bounds = shapes.dropFirst().reduce(first.bounds) { $0.union($1.bounds) }
-        let target = visibleCenter
-        let dx = target.x - bounds.midX, dy = target.y - bounds.midY
-        let group = shapes.count > 1 ? UUID() : nil
-        for i in shapes.indices {
-            shapes[i].rect = shapes[i].rect.offsetBy(dx: dx, dy: dy)
-            shapes[i].groupID = group
-            shapes[i].layerID = doc.activeLayerID
-        }
-        guard insertFragment(ClipboardFragment(shapes: shapes, connectors: []), offset: 0) else {
+        let fragment = try SVGImporter.fragment(from: data)
+        guard insertSVGFragments([fragment], centeredAt: visibleCenter) else {
             throw SVGImportError.invalid("trop de formes ou valeurs hors limites")
         }
     }
+
+    /// Pose les dessins côte à côte (espacés de 20 pt), l'ensemble centré sur `center`.
+    @discardableResult
+    func insertSVGFragments(_ fragments: [ClipboardFragment], centeredAt center: CGPoint) -> Bool {
+        let gap: CGFloat = 20
+        let boxes = fragments.map(SVGImporter.bounds)
+        let totalWidth = boxes.reduce(0) { $0 + $1.width } + gap * CGFloat(max(boxes.count - 1, 0))
+        let maxHeight = boxes.map(\.height).max() ?? 0
+        guard center.x.isFinite, center.y.isFinite, totalWidth.isFinite else { return false }
+        var x = center.x - totalWidth / 2
+        var shapes: [Shape] = []
+        for (fragment, b) in zip(fragments, boxes) {
+            let dx = x - b.minX, dy = center.y - maxHeight / 2 + (maxHeight - b.height) / 2 - b.minY
+            for var s in fragment.shapes {
+                s.rect = s.rect.offsetBy(dx: dx, dy: dy)
+                s.layerID = doc.activeLayerID
+                shapes.append(s)
+            }
+            x += b.width + gap
+        }
+        return insertFragment(ClipboardFragment(shapes: shapes, connectors: []), offset: 0)
+    }
+
 }

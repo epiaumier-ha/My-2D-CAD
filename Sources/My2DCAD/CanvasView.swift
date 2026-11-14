@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 private enum Handle: CaseIterable {
     case topLeft, topRight, bottomLeft, bottomRight
@@ -108,14 +109,8 @@ struct CanvasView: View {
             .gesture(dragGesture)
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { canvasFrame = $0 }
             .contextMenu { canvasContextMenu }
-            .dropDestination(for: String.self) { items, location in
-                guard let payload = items.first else { return false }
-                if let master = UserStencilLibrary.shared.master(fromDragPayload: payload) {
-                    return store.insertUserMaster(master, centeredAt: store.toWorld(location))
-                }
-                guard let item = StencilCatalog.item(fromDragPayload: payload) else { return false }
-                store.insertStencil(item, centeredAt: store.toWorld(location))
-                return true
+            .onDrop(of: [.fileURL, .plainText], isTargeted: nil) { providers, location in
+                handleDrop(providers, at: location)
             }
             .onContinuousHover { phase in
                 switch phase {
@@ -229,6 +224,39 @@ struct CanvasView: View {
 
     private func shapeIndex(_ id: UUID) -> Int? {
         store.doc.shapes.firstIndex { $0.id == id }
+    }
+
+    // MARK: - Dépôt (formes du volet, fichiers SVG du Finder)
+
+    /// Formes du volet Formes (identifiant texte) ou fichiers SVG glissés depuis le Finder, posés au
+    /// point de dépôt. Les données glissées sont lues de façon asynchrone puis contrôlées.
+    private func handleDrop(_ providers: [NSItemProvider], at location: CGPoint) -> Bool {
+        let center = store.toWorld(location)
+        let files = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+        if !files.isEmpty {
+            Task { @MainActor in
+                var urls: [URL] = []
+                for p in files.prefix(SVGImporter.maxFilesPerImport + 1) {
+                    if let url = await p.loadDroppedObject(URL.self), SVGImporter.isSVGFile(url) {
+                        urls.append(url)
+                    }
+                }
+                guard !urls.isEmpty else { NSSound.beep(); return }
+                store.importSVG(urls: urls, centeredAt: center)
+            }
+            return true
+        }
+        guard let text = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) })
+        else { return false }
+        Task { @MainActor in
+            guard let payload = await text.loadDroppedObject(String.self) else { return }
+            if let master = UserStencilLibrary.shared.master(fromDragPayload: payload) {
+                store.insertUserMaster(master, centeredAt: center)
+            } else if let item = StencilCatalog.item(fromDragPayload: payload) {
+                store.insertStencil(item, centeredAt: center)
+            }
+        }
+        return true
     }
 
     // MARK: - Gestes
@@ -1339,6 +1367,16 @@ struct CanvasView: View {
 
         default:
             break
+        }
+    }
+}
+
+extension NSItemProvider {
+    /// Lecture asynchrone d'un objet déposé (adresse de fichier, texte) ; nil s'il est illisible.
+    func loadDroppedObject<T: _ObjectiveCBridgeable & Sendable>(_ type: T.Type) async -> T?
+    where T._ObjectiveCType: NSItemProviderReading {
+        await withCheckedContinuation { continuation in
+            _ = loadObject(ofClass: type) { value, _ in continuation.resume(returning: value) }
         }
     }
 }
