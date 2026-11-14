@@ -190,8 +190,40 @@ struct InspectorView: View {
             pane("Sélection") {
                 Text(selectionSummary)
             }
+            if let f = store.selectionRotationFrame, let o = store.selectionFrameOrigin { groupSizeSection(f, origin: o) }
             if let target = store.selectionRotationTarget, target.frame != nil { rotationSection(target, single: nil) }
             if !store.selectedShapes.isEmpty && !store.doc.layers.isEmpty { layerSection }
+        }
+    }
+
+    /// Taille et position d'un groupe ou d'une sélection multiple (fenêtre Taille et position de Visio) :
+    /// coin du cadre (repère du groupe s'il est pivoté), largeur et hauteur ; le coin reste fixe et les
+    /// formes sont mises à l'échelle comme avec les poignées (texte et épaisseurs inchangés).
+    private func groupSizeSection(_ f: RotationFrame, origin o: CGPoint) -> some View {
+        let d = store.doc
+        let group = d.isWholeGroup(store.selectedShapes)
+        func numeric(_ label: String, _ value: CGFloat, min minValue: CGFloat? = nil,
+                     apply: @escaping (CGFloat) -> Void) -> some View {
+            NumericField(title: "\(label) (\(d.unit.symbol))", value: Double(d.measure(value)),
+                         fractionDigits: max(d.precision, 1), context: store.selection,
+                         isValid: { d.worldLength(forMeasure: $0).isFinite }) { newValue in
+                var v = min(max(d.worldLength(forMeasure: newValue), -1_000_000), 1_000_000)
+                if let minValue { v = max(v, minValue) }
+                apply(v)
+            }
+        }
+        return pane(group ? "Taille et position du groupe" : "Taille et position de la sélection") {
+            numeric("X", o.x) { store.moveSelectionFrame(x: $0) }
+            numeric("Y", o.y) { store.moveSelectionFrame(y: $0) }
+            if f.size.width > 1e-9 {
+                numeric("Largeur", f.size.width, min: 1) { store.resizeSelectionFrame(width: $0) }
+            }
+            if f.size.height > 1e-9 {
+                numeric("Hauteur", f.size.height, min: 1) { store.resizeSelectionFrame(height: $0) }
+            }
+            Text("Le coin haut-gauche reste fixe ; les formes sont mises à l'échelle, texte et épaisseurs de trait inchangés.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

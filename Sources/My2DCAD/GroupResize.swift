@@ -109,3 +109,43 @@ extension Diagram {
         }
     }
 }
+
+// MARK: - Taille et position d'un groupe ou d'une sélection multiple (volet Format de la forme)
+
+@MainActor
+extension DocumentStore {
+    /// Coin haut-gauche du cadre de la sélection, dans le repère du cadre (comme X et Y d'une forme
+    /// seule, qui désignent le coin de son rectangle avant rotation).
+    var selectionFrameOrigin: CGPoint? {
+        guard let f = selectionRotationFrame else { return nil }
+        return CGPoint(x: f.center.x - f.size.width / 2, y: f.center.y - f.size.height / 2)
+    }
+
+    /// Déplace la sélection pour que le coin de son cadre soit en (x, y) ; nil : coordonnée inchangée.
+    func moveSelectionFrame(x: CGFloat? = nil, y: CGFloat? = nil) {
+        guard let o = selectionFrameOrigin else { return }
+        let dx = x.map { $0 - o.x } ?? 0, dy = y.map { $0 - o.y } ?? 0
+        guard dx.isFinite, dy.isFinite, dx != 0 || dy != 0 else { return }
+        editSelection(key: "frame-position") { s in
+            s.rect.origin.x += dx
+            s.rect.origin.y += dy
+        }
+    }
+
+    /// Donne au cadre de la sélection la largeur et/ou la hauteur demandées (unités du dessin), le coin
+    /// haut-gauche du cadre restant fixe. Sans effet sur un axe plat (traits alignés).
+    func resizeSelectionFrame(width: CGFloat? = nil, height: CGFloat? = nil) {
+        guard let f = selectionRotationFrame else { return }
+        func factor(_ target: CGFloat?, _ current: CGFloat) -> CGFloat {
+            guard let target, target.isFinite, target > 0, current > 1e-9 else { return 1 }
+            return target / current
+        }
+        let sx = factor(width, f.size.width), sy = factor(height, f.size.height)
+        guard sx != 1 || sy != 1 else { return }
+        let t = FrameScaling(frame: f, anchor: CGPoint(x: -f.size.width / 2, y: -f.size.height / 2), sx: sx, sy: sy)
+        let scaled = Dictionary(uniqueKeysWithValues: selectedShapes.map { ($0.id, $0.scaled(t)) })
+        editSelection(key: "frame-size") { s in
+            if let n = scaled[s.id] { s = n }
+        }
+    }
+}

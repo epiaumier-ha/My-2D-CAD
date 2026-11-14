@@ -3394,6 +3394,49 @@ final class GroupResizeTests: XCTestCase {
         XCTAssertEqual(after.size.height, 100, accuracy: 1e-6)
     }
 
+    func testSizePaneMovesAndResizesGroupFromTopLeft() throws {
+        let store = try groupedStore()
+        XCTAssertEqual(store.selectionFrameOrigin, CGPoint(x: 0, y: 0))
+        store.moveSelectionFrame(x: 50)
+        store.moveSelectionFrame(y: 20)
+        XCTAssertEqual(store.selectionFrameOrigin?.x ?? 0, 50, accuracy: 1e-9)
+        XCTAssertEqual(store.selectionFrameOrigin?.y ?? 0, 20, accuracy: 1e-9)
+
+        store.resizeSelectionFrame(width: 600)
+        var f = try frame(store)
+        XCTAssertEqual(f.size.width, 600, accuracy: 1e-9)
+        XCTAssertEqual(f.size.height, 100, accuracy: 1e-9)
+        XCTAssertEqual(store.selectionFrameOrigin?.x ?? 0, 50, accuracy: 1e-9, "le coin haut-gauche reste fixe")
+        store.resizeSelectionFrame(height: 50)
+        f = try frame(store)
+        XCTAssertEqual(f.size.height, 50, accuracy: 1e-9)
+        let rect = try XCTUnwrap(store.doc.shapes.first { $0.kind == .rectangle })
+        XCTAssertEqual(rect.rect, CGRect(x: 50, y: 20, width: 200, height: 25))
+        XCTAssertNoThrow(try DiagramIO.validate(store.doc))
+
+        // Valeurs absurdes ignorées ; chaque champ est une étape d'annulation.
+        let before = store.doc
+        store.resizeSelectionFrame(width: .nan)
+        store.resizeSelectionFrame(width: 0)
+        XCTAssertEqual(store.doc, before)
+        store.undo()
+        XCTAssertEqual(try frame(store).size.height, 100, accuracy: 1e-9)
+    }
+
+    func testSizePaneOnRotatedGroupKeepsItsAngle() throws {
+        let store = try groupedStore()
+        store.rotateSelection(by: 30)
+        let start = try frame(store)
+        let corner = start.corners[0]
+        store.resizeSelectionFrame(width: 150)
+        let f = try frame(store)
+        XCTAssertEqual(f.angle, 30, accuracy: 1e-9)
+        XCTAssertEqual(f.size.width, 150, accuracy: 1e-6)
+        XCTAssertEqual(f.size.height, start.size.height, accuracy: 1e-6, "hauteur inchangée (rotation arrondie au millième)")
+        XCTAssertEqual(f.corners[0].x, corner.x, accuracy: 1e-6, "coin haut-gauche du cadre pivoté immobile")
+        XCTAssertEqual(f.corners[0].y, corner.y, accuracy: 1e-6)
+    }
+
     func testMultipleSelectionAndFlatFrame() throws {
         let store = DocumentStore()
         store.insertPath(kind: .line, from: CGPoint(x: 0, y: 0), to: CGPoint(x: 100, y: 0), line: nil)
